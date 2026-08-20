@@ -1,7 +1,7 @@
-# Twitter / X Scraper (WX-Scrapper)
+# Twitter / X Scraper (WX-Scraper)
 
 > **Developer:** [@W1ld](https://github.com/W1ld)  
-> **Repository:** [https://github.com/W1ld/WX-Scrapper](https://github.com/W1ld/WX-Scrapper)
+> **Repository:** [https://github.com/W1ld/WX-Scraper](https://github.com/W1ld/WX-Scraper)
 
 Aplikasi scraper Twitter (X) berbasis Python dengan antarmuka CLI interaktif, fitur penanganan Rate Limit otomatis, auto-checkpointing, dan mode headless/command-line arguments.
 
@@ -37,7 +37,7 @@ Aplikasi scraper Twitter (X) berbasis Python dengan antarmuka CLI interaktif, fi
 ## 📁 Struktur Proyek
 
 ```
-WX-Scrapper/
+WX-Scraper/
 ├── .env.example          # Template konfigurasi kredensial
 ├── requirements.txt      # Daftar pustaka dependensi
 ├── config.py             # Pengaturan konfigurasi & environment variable
@@ -79,8 +79,8 @@ Program ini membutuhkan **Python 3.10 atau versi yang lebih baru**. Jika Anda be
 ### Langkah 1: Clone Repositori & Masuk ke Direktori Proyek
 Buka terminal (PowerShell / Command Prompt / Bash), clone repositori ini, lalu masuk ke folder proyek:
 ```bash
-git clone https://github.com/W1ld/WX-Scrapper.git
-cd WX-Scrapper
+git clone https://github.com/W1ld/WX-Scraper.git
+cd WX-Scraper
 ```
 
 ### Langkah 2: (Opsional tapi Disarankan) Buat & Aktifkan Virtual Environment
@@ -153,7 +153,7 @@ python main.py
 Pilihan menu yang tersedia:
 ```
 ==================================================
-  WX-Scrapper (Twitter / X Data Extraction Suite) 
+  WX-Scraper (Twitter / X Data Extraction Suite) 
 ==================================================
 Pilih Fitur Scraping:
   1. Cari Tweet berdasarkan Kata Kunci / Hashtag (Hanya Tweet Utama)

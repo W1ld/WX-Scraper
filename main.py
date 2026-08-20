@@ -25,9 +25,9 @@ console = Console()
 
 def display_banner():
     console.print(Panel.fit(
-        "[bold cyan]WX-Scrapper (Twitter / X Data Extraction Suite)[/bold cyan]\n"
+        "[bold cyan]WX-Scraper (Twitter / X Data Extraction Suite)[/bold cyan]\n"
         "[dim]Tool Scraping Data Twitter: Search Query, Search + Replies per Tweet, & Tweet Details[/dim]\n"
-        "[bold yellow]Developer:[/bold yellow] [bold white]@W1ld[/bold white] | [bold yellow]GitHub:[/bold yellow] [bold green]https://github.com/W1ld/WX-Scrapper[/bold green]",
+        "[bold yellow]Developer:[/bold yellow] [bold white]@W1ld[/bold white] | [bold yellow]GitHub:[/bold yellow] [bold green]https://github.com/W1ld/WX-Scraper[/bold green]",
         border_style="cyan"
     ))
 
@@ -94,7 +94,7 @@ async def interactive_menu():
         choice = Prompt.ask("\n[?] Masukkan pilihan Anda", choices=["1", "2", "3", "4", "5"], default="1")
 
         if choice == "5":
-            console.print("[bold green]Terima kasih telah menggunakan WX Scrapper![/bold green]")
+            console.print("[bold green]Terima kasih telah menggunakan WX Scraper![/bold green]")
             break
 
         # Pastikan client terautentikasi
@@ -230,7 +230,7 @@ async def run_cli_args(args):
         await prompt_and_save_cookies(client)
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="WX-Scrapper: Twitter / X Data Extraction CLI Tool")
+    parser = argparse.ArgumentParser(description="WX-Scraper: Twitter / X Data Extraction CLI Tool")
     parser.add_argument("--mode", "-m", choices=["search", "search-replies", "combo", "tweet", "login", "menu"], default=None,
                         help="Mode operasi: search, search-replies (combo), tweet, login, atau menu interaktif")
     parser.add_argument("--query", "-q", type=str, help="Kata kunci atau hashtag untuk pencarian tweet")
