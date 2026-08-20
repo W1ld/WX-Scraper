@@ -9,15 +9,34 @@ Aplikasi scraper Twitter (X) berbasis Python dengan antarmuka CLI interaktif, fi
 
 ## ✨ Keunggulan & Fitur Utama
 
-- 🚀 **Akses Cepat & Ringan (Async GraphQL Engine):** Mengakses endpoint GraphQL internal Twitter/X langsung via HTTP/2 dengan `asyncio` & `httpx`. Jauh lebih cepat, stabil, dan hemat memori dibandingkan scraper berbasis browser seperti Selenium/Puppeteer.
+- 💰 **100% Gratis & Tanpa Biaya API:** Tidak memerlukan langganan berbayar X Developer API ($100 – $5.000/bulan) yang kuotanya sangat dibatasi.
+- 🚀 **Akses Cepat & Ringan (Async GraphQL Engine):** Mengakses endpoint GraphQL internal Twitter/X langsung via HTTP/2 dengan `asyncio` & `httpx`. Jauh lebih cepat, stabil, dan hemat memori tanpa beban browser Selenium/Puppeteer.
 - 💬 **Pencarian 2-in-1 (Tweet Utama + Komentar / Balasan Publik):** Mampu mencari tweet topik sekaligus otomatis menggali (*drill-down*) seluruh komentar/balasan (*replies/threads*) pada masing-masing tweet secara terstruktur dengan relasi `parent_tweet_id`.
+- ⏱️ **Jeda Acak Humanis & Fleksibel (*Configurable Random Delay*):** Dilengkapi jeda waktu acak yang dapat dikonfigurasi (`DELAY_MIN` & `DELAY_MAX` di `.env`, default 3–6 detik) untuk mensimulasikan perilaku penjelajahan manusia asli (*human-like behavior*), meminimalkan risiko deteksi bot, dan menjaga akun tetap aman.
+- 🔎 **Dukungan Penuh Advanced Search Operators:** Mendukung seluruh sintaks pencarian resmi X (filter `lang:id`, rentang tanggal `since: / until:`, metrik keterlibatan `min_faves: / min_retweets:`, filter akun `from: / to:`, hingga kata kunci eksklusif).
 - 🔄 **Pagination Kursor Cerdas (*Cursor-Based Pagination*):** Menangani navigasi halaman dinamis GraphQL (`TimelineAddEntries` & `TimelineReplaceEntry`) sehingga mampu menarik data dalam skala besar (>1.000 data) secara kontinu tanpa duplikasi.
 - 🛡️ **Manajemen Rate Limit Otomatis (*Auto-Cooldown*):** Membaca header `x-rate-limit-reset` secara dinamis saat terkena batas kuota (HTTP 429), menampilkan hitung mundur jeda waktu, dan otomatis melanjutkan scraping begitu batas waktu pulih.
 - 💾 **Sistem Auto-Checkpoint:** Data sementara otomatis diamankan dan dicadangkan secara berkala ke disk lokal sehingga hasil penarikan tidak hilang jika terjadi gangguan koneksi atau listrik.
 - 🔒 **Aman & Bebas CAPTCHA (Cookie Session Auth):** Menggunakan token sesi browser resmi (`auth_token` & `ct0`) tanpa perlu memasukkan password, 100% aman dari verifikasi bot/CAPTCHA dan risiko akun terkunci.
 - 📊 **Dataset Lengkap & Siap Analisis (26+ Atribut Metadata):** Menyediakan metadata komprehensif mulai dari teks utuh (*untruncated*), metrik interaksi (likes, retweets, replies, quotes, bookmarks, views/tayangan), detail profil pengguna (bio, verified status, follower/following count, lokasi), hingga media URLs dan hashtags.
 - 📁 **Ekspor Fleksibel (Excel/CSV & JSON):** Mendukung format CSV `utf-8-sig` (langsung terbaca rapi di Microsoft Excel dengan dukungan emoji) dan format JSON hierarkis.
+- 🌐 **Dukungan Proxy Dinamis:** Mendukung koneksi proxy (HTTP/HTTPS/SOCKS5) untuk rotasi IP dan kebutuhan scraping volume tinggi.
 - 💻 **Dual Mode Penggunaan:** Mendukung **Menu Interaktif (Terminal UI Rich)** untuk kemudahan penggunaan langsung, serta **Mode Command-Line (CLI Arguments)** untuk kebutuhan otomatisasi skrip / *data pipeline*.
+
+---
+
+## 📊 Tabel Perbandingan Metode Scraping
+
+| Fitur / Parameter | **Octoparse** | **Selenium / Playwright** | **Twitter-Harvest (Colab)** | **WX-Scraper (Tool Ini)** |
+| :--- | :---: | :---: | :---: | :---: |
+| **Biaya & Batasan** | ❌ Berbayar ($89–$249/bln) | ✅ Gratis | ✅ Gratis | ✅ **100% Gratis & Open-Source** |
+| **Kecepatan & Penggunaan RAM** | ❌ Lambat & Boros RAM (500MB+) | ❌ Lambat & Boros RAM (500MB+) | ⚠️ Sedang | ⚡ **Sangat Cepat & Ringan (<50MB)** |
+| **Scrape Tweet Utama + Replies** | ❌ Sangat Rumit (Sering Gagal) | ⚠️ Perlu konfigurasi DOM rumit | ❌ Hanya Tweet Utama | 🎯 **2-in-1 Otomatis (Relasional)** |
+| **Kendala Infinite Scroll Twitter**| ⚠️ Rentan Terlewat / Unmounted | ⚠️ Rentan Crash / Freeze | ⚠️ Terbatas | 🔄 **Anti-Skip (Kursor GraphQL)** |
+| **Simulasi Jeda Acak (Random Delay)**| ⚠️ Manual Workflow | ⚠️ Manual Scripting | ⚠️ Terbatas | ⏱️ **Bawaan & Dapat Diatur (.env)** |
+| **Risiko Timeout & Hilang Data** | ⚠️ Rentan Task Error | ❌ Rentan crash | ❌ Sering timeout di Colab | 🛡️ **Auto-Checkpoint & Resume** |
+| **Bebas Masalah Driver Browser** | ⚠️ Terikat Browser Internal | ❌ Sering error ChromeDriver | ✅ Ya | ✅ **Bebas Driver (Pure Async)** |
+| **Dukungan Filter Query Lengkap** | ⚠️ Terbatas pada UI Web | ⚠️ Terbatas pada UI Web | ⚠️ Terbatas | 🔍 **Penuh (Semua Operator X)** |
 
 ---
 
