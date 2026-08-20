@@ -7,6 +7,20 @@ Aplikasi scraper Twitter (X) berbasis Python dengan antarmuka CLI interaktif, fi
 
 ---
 
+## ✨ Keunggulan & Fitur Utama
+
+- 🚀 **Akses Cepat & Ringan (Async GraphQL Engine):** Mengakses endpoint GraphQL internal Twitter/X langsung via HTTP/2 dengan `asyncio` & `httpx`. Jauh lebih cepat, stabil, dan hemat memori dibandingkan scraper berbasis browser seperti Selenium/Puppeteer.
+- 💬 **Pencarian 2-in-1 (Tweet Utama + Komentar / Balasan Publik):** Mampu mencari tweet topik sekaligus otomatis menggali (*drill-down*) seluruh komentar/balasan (*replies/threads*) pada masing-masing tweet secara terstruktur dengan relasi `parent_tweet_id`.
+- 🔄 **Pagination Kursor Cerdas (*Cursor-Based Pagination*):** Menangani navigasi halaman dinamis GraphQL (`TimelineAddEntries` & `TimelineReplaceEntry`) sehingga mampu menarik data dalam skala besar (>1.000 data) secara kontinu tanpa duplikasi.
+- 🛡️ **Manajemen Rate Limit Otomatis (*Auto-Cooldown*):** Membaca header `x-rate-limit-reset` secara dinamis saat terkena batas kuota (HTTP 429), menampilkan hitung mundur jeda waktu, dan otomatis melanjutkan scraping begitu batas waktu pulih.
+- 💾 **Sistem Auto-Checkpoint:** Data sementara otomatis diamankan dan dicadangkan secara berkala ke disk lokal sehingga hasil penarikan tidak hilang jika terjadi gangguan koneksi atau listrik.
+- 🔒 **Aman & Bebas CAPTCHA (Cookie Session Auth):** Menggunakan token sesi browser resmi (`auth_token` & `ct0`) tanpa perlu memasukkan password, 100% aman dari verifikasi bot/CAPTCHA dan risiko akun terkunci.
+- 📊 **Dataset Lengkap & Siap Analisis (26+ Atribut Metadata):** Menyediakan metadata komprehensif mulai dari teks utuh (*untruncated*), metrik interaksi (likes, retweets, replies, quotes, bookmarks, views/tayangan), detail profil pengguna (bio, verified status, follower/following count, lokasi), hingga media URLs dan hashtags.
+- 📁 **Ekspor Fleksibel (Excel/CSV & JSON):** Mendukung format CSV `utf-8-sig` (langsung terbaca rapi di Microsoft Excel dengan dukungan emoji) dan format JSON hierarkis.
+- 💻 **Dual Mode Penggunaan:** Mendukung **Menu Interaktif (Terminal UI Rich)** untuk kemudahan penggunaan langsung, serta **Mode Command-Line (CLI Arguments)** untuk kebutuhan otomatisasi skrip / *data pipeline*.
+
+---
+
 ## ⚠️ Hal-Hal Penting yang Perlu Diperhatikan
 
 1. **Autentikasi Sesi Browser (`auth_token` & `ct0`)**:

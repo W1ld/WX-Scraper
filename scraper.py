@@ -38,6 +38,44 @@ GQL_FEATURES = {
     "responsive_web_enhance_cards_enabled": False
 }
 
+def extract_cursor_from_instructions(instructions: List[dict], cursor_type: str = "Bottom") -> Optional[str]:
+    """
+    Extracts the bottom/top cursor token across all GraphQL instructions 
+    (TimelineAddEntries, TimelineReplaceEntry, TimelineAddToModule).
+    """
+    target_type = cursor_type.lower()
+    for inst in instructions:
+        itype = inst.get("type", "")
+        if itype == "TimelineAddEntries":
+            for entry in inst.get("entries", []):
+                eid = entry.get("entryId", "").lower()
+                content = entry.get("content", {})
+                ctype = str(content.get("cursorType") or content.get("itemContent", {}).get("cursorType") or "").lower()
+                if target_type in eid or ctype == target_type or (target_type == "bottom" and "showmore" in eid):
+                    val = (
+                        content.get("value")
+                        or content.get("itemContent", {}).get("value")
+                        or content.get("operation", {}).get("cursor", {}).get("value")
+                    )
+                    if val:
+                        return val
+
+        elif itype == "TimelineReplaceEntry":
+            entry = inst.get("entry", {})
+            eid = (entry.get("entryId", "") or inst.get("entryIdToReplace", "") or inst.get("entry_id_to_replace", "")).lower()
+            content = entry.get("content", {})
+            ctype = str(content.get("cursorType") or content.get("itemContent", {}).get("cursorType") or "").lower()
+            if target_type in eid or ctype == target_type or (target_type == "bottom" and "showmore" in eid):
+                val = (
+                    content.get("value")
+                    or content.get("itemContent", {}).get("value")
+                    or content.get("operation", {}).get("cursor", {}).get("value")
+                )
+                if val:
+                    return val
+
+    return None
+
 async def handle_rate_limit(response_headers: dict, checkpoint_data: List[Dict[str, Any]] | None = None, prefix: str = "backup"):
     """
     Handles Twitter rate limit (HTTP 429) by waiting until the reset timestamp.
@@ -78,6 +116,7 @@ async def search_tweets(
     collected_tweets: List[Dict[str, Any]] = []
     seen_ids = set()
     cursor = None
+    empty_batches_count = 0
     http = client.get_http_client()
 
     while len(collected_tweets) < max_tweets:
@@ -119,22 +158,20 @@ async def search_tweets(
                 entries = inst.get("entries", [])
                 break
 
-        if not entries:
+        if not entries and not instructions:
             print("[-] Tidak ada tweet baru ditemukan.")
             break
 
-        new_cursor = None
+        new_cursor = extract_cursor_from_instructions(instructions, cursor_type="Bottom")
         new_batch_count = 0
 
         for entry in entries:
             entry_id = entry.get("entryId", "")
-            # Check bottom cursor
-            if "cursor-bottom" in entry_id or entry.get("content", {}).get("cursorType") == "Bottom":
-                new_cursor = entry.get("content", {}).get("value") or entry.get("content", {}).get("itemContent", {}).get("value")
+            content = entry.get("content", {})
 
-            # Check tweet item
-            if entry_id.startswith("tweet-"):
-                tweet_results = entry.get("content", {}).get("itemContent", {}).get("tweet_results", {}).get("result", {})
+            # 1. Single tweet entry
+            if entry_id.startswith("tweet-") or entry_id.startswith("sq-I-t-"):
+                tweet_results = content.get("itemContent", {}).get("tweet_results", {}).get("result", {})
                 parsed = extract_tweet_from_result(tweet_results, row_type="main_tweet")
                 if parsed and parsed["tweet_id"] not in seen_ids:
                     seen_ids.add(parsed["tweet_id"])
@@ -142,6 +179,19 @@ async def search_tweets(
                     new_batch_count += 1
                     if len(collected_tweets) >= max_tweets:
                         break
+
+            # 2. Module entries (items list)
+            elif "items" in content:
+                for item in content.get("items", []):
+                    item_content = item.get("item", {}).get("itemContent", {})
+                    tweet_results = item_content.get("tweet_results", {}).get("result", {})
+                    parsed = extract_tweet_from_result(tweet_results, row_type="main_tweet")
+                    if parsed and parsed["tweet_id"] not in seen_ids:
+                        seen_ids.add(parsed["tweet_id"])
+                        collected_tweets.append(parsed)
+                        new_batch_count += 1
+                        if len(collected_tweets) >= max_tweets:
+                            break
 
         print(f"[*] Terkumpul: {len(collected_tweets)}/{max_tweets} tweets (+{new_batch_count} baru)")
 
@@ -152,7 +202,16 @@ async def search_tweets(
         if len(collected_tweets) >= max_tweets:
             break
 
-        if not new_cursor or new_cursor == cursor or new_batch_count == 0:
+        # Check empty batch and cursor end conditions
+        if new_batch_count == 0:
+            empty_batches_count += 1
+            if empty_batches_count >= 3:
+                print("[-] Tidak ada tweet baru setelah 3 percobaan halaman (end of results).")
+                break
+        else:
+            empty_batches_count = 0
+
+        if not new_cursor or new_cursor == cursor:
             print("[-] Tidak ada halaman hasil berikutnya (end of results).")
             break
 
@@ -220,10 +279,10 @@ async def fetch_tweet_replies(
                 entries = inst.get("entries", [])
                 break
 
-        if not entries:
+        if not entries and not instructions:
             break
 
-        new_cursor = None
+        new_cursor = extract_cursor_from_instructions(instructions, cursor_type="Bottom")
         new_batch_count = 0
 
         for entry in entries:
@@ -242,7 +301,7 @@ async def fetch_tweet_replies(
                         if len(replies) >= max_replies:
                             break
 
-            elif entry_id.startswith("tweet-") and entry_id != f"tweet-{tweet_id}":
+            elif (entry_id.startswith("tweet-") or entry_id.startswith("sq-I-t-")) and entry_id != f"tweet-{tweet_id}":
                 tweet_results = entry.get("content", {}).get("itemContent", {}).get("tweet_results", {}).get("result", {})
                 parsed = extract_tweet_from_result(tweet_results, row_type="reply", parent_tweet_id=tweet_id)
                 if parsed and parsed["tweet_id"] != tweet_id and parsed["tweet_id"] not in seen_reply_ids:
@@ -251,9 +310,6 @@ async def fetch_tweet_replies(
                     new_batch_count += 1
                     if len(replies) >= max_replies:
                         break
-
-            if "cursor-bottom" in entry_id:
-                new_cursor = entry.get("content", {}).get("value")
 
             if len(replies) >= max_replies:
                 break
@@ -415,10 +471,12 @@ async def get_tweet_detail_and_replies(
                 entries = inst.get("entries", [])
                 break
 
-        if not entries:
+        if not entries and not instructions:
             break
 
-        new_cursor = None
+        new_cursor = extract_cursor_from_instructions(instructions, cursor_type="Bottom")
+        new_batch_count = 0
+
         for entry in entries:
             entry_id = entry.get("entryId", "")
             if entry_id == f"tweet-{tweet_id}" and not main_tweet_data:
@@ -434,20 +492,19 @@ async def get_tweet_detail_and_replies(
                     if parsed and parsed["tweet_id"] != tweet_id and parsed["tweet_id"] not in seen_ids:
                         seen_ids.add(parsed["tweet_id"])
                         replies_data.append(parsed)
+                        new_batch_count += 1
                         if len(replies_data) >= max_replies:
                             break
 
-            elif entry_id.startswith("tweet-") and entry_id != f"tweet-{tweet_id}":
+            elif (entry_id.startswith("tweet-") or entry_id.startswith("sq-I-t-")) and entry_id != f"tweet-{tweet_id}":
                 tweet_results = entry.get("content", {}).get("itemContent", {}).get("tweet_results", {}).get("result", {})
                 parsed = extract_tweet_from_result(tweet_results, row_type="reply", parent_tweet_id=tweet_id)
                 if parsed and parsed["tweet_id"] != tweet_id and parsed["tweet_id"] not in seen_ids:
                     seen_ids.add(parsed["tweet_id"])
                     replies_data.append(parsed)
+                    new_batch_count += 1
                     if len(replies_data) >= max_replies:
                         break
-
-            if "cursor-bottom" in entry_id:
-                new_cursor = entry.get("content", {}).get("value")
 
             if len(replies_data) >= max_replies:
                 break
