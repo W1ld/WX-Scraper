@@ -1,7 +1,8 @@
 import argparse
 import asyncio
+from datetime import datetime
 import sys
-from typing import List
+from typing import List, Optional
 
 # Fix Windows console encoding for UTF-8 characters and emojis
 if sys.platform == "win32":
@@ -78,6 +79,35 @@ def pause_prompt(msg: str = "\nTekan Enter untuk melanjutkan..."):
     except (EOFError, KeyboardInterrupt):
         pass
 
+def validate_date_format(date_str: str) -> bool:
+    """Memeriksa apakah format string tanggal sesuai dengan YYYY-MM-DD dan valid kalendernya."""
+    if not date_str or not date_str.strip():
+        return True
+    try:
+        datetime.strptime(date_str.strip(), "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+def prompt_optional_date(prompt_text: str) -> Optional[str]:
+    """Menanyakan input tanggal opsional (format YYYY-MM-DD), pengguna bisa menekan Enter untuk melewati."""
+    while True:
+        val = Prompt.ask(prompt_text, default="").strip()
+        if not val:
+            return None
+        if validate_date_format(val):
+            return val
+        console.print("[bold red][!] Format tanggal tidak valid. Harap gunakan format YYYY-MM-DD (contoh: 2024-01-31) atau tekan Enter untuk lewati.[/bold red]")
+
+def build_export_prefix(base: str, query: str, since_date: Optional[str] = None, until_date: Optional[str] = None) -> str:
+    """Membuat prefix nama file ekspor yang memuat informasi tanggal jika filter aktif."""
+    parts = [f"{base}_{query}"]
+    if since_date:
+        parts.append(f"since_{since_date}")
+    if until_date:
+        parts.append(f"until_{until_date}")
+    return "_".join(parts)
+
 async def interactive_menu():
     """Menu CLI interaktif yang mudah digunakan."""
     client = None
@@ -118,15 +148,32 @@ async def interactive_menu():
                 continue
 
             sort_mode = Prompt.ask("[?] Urutan data", choices=["top", "latest", "media"], default="top")
+            since_date = prompt_optional_date("[?] Filter tanggal mulai / Since (YYYY-MM-DD, tekan Enter untuk lewati)")
+            until_date = prompt_optional_date("[?] Filter tanggal akhir / Until (YYYY-MM-DD, tekan Enter untuk lewati)")
+
+            if since_date and until_date and since_date > until_date:
+                console.print(f"[bold yellow][!] Peringatan: Tanggal mulai ({since_date}) lebih besar dari tanggal akhir ({until_date}).[/bold yellow]")
+                if Prompt.ask("[?] Tetap lanjutkan pencarian?", choices=["y", "n"], default="y") != "y":
+                    continue
+
             count = IntPrompt.ask("[?] Jumlah tweet yang ingin diambil", default=50)
             fmt = Prompt.ask("[?] Format ekspor", choices=["both", "csv", "json"], default="csv")
 
+            file_prefix = build_export_prefix("search", query, since_date, until_date)
+
             with console.status("[bold green]Sedang melakukan scraping tweet...[/bold green]", spinner="dots"):
-                tweets = await search_tweets(client, query=query, product=sort_mode.capitalize(), max_tweets=count)
+                tweets = await search_tweets(
+                    client,
+                    query=query,
+                    product=sort_mode.capitalize(),
+                    max_tweets=count,
+                    since_date=since_date,
+                    until_date=until_date
+                )
 
             if tweets:
                 show_preview_table(tweets)
-                export_data(tweets, prefix=f"search_{query}", export_format=fmt)
+                export_data(tweets, prefix=file_prefix, export_format=fmt)
             else:
                 console.print("[yellow]Tidak ada tweet yang berhasil diambil.[/yellow]")
 
@@ -163,9 +210,19 @@ async def interactive_menu():
                 continue
 
             sort_mode = Prompt.ask("[?] Urutan tweet", choices=["top", "latest", "media"], default="top")
+            since_date = prompt_optional_date("[?] Filter tanggal mulai / Since (YYYY-MM-DD, tekan Enter untuk lewati)")
+            until_date = prompt_optional_date("[?] Filter tanggal akhir / Until (YYYY-MM-DD, tekan Enter untuk lewati)")
+
+            if since_date and until_date and since_date > until_date:
+                console.print(f"[bold yellow][!] Peringatan: Tanggal mulai ({since_date}) lebih besar dari tanggal akhir ({until_date}).[/bold yellow]")
+                if Prompt.ask("[?] Tetap lanjutkan pencarian?", choices=["y", "n"], default="y") != "y":
+                    continue
+
             count = IntPrompt.ask("[?] Jumlah tweet utama yang ingin dicari", default=100)
             replies_per_tweet = IntPrompt.ask("[?] Jumlah komentar per tweet yang ingin diambil (maksimal)", default=5)
             fmt = Prompt.ask("[?] Format ekspor", choices=["both", "csv", "json"], default="csv")
+
+            file_prefix = build_export_prefix("search_with_replies", query, since_date, until_date)
 
             console.print(f"\n[dim]Memulai scraping {count} tweet '{query}' ({sort_mode}) dan maks {replies_per_tweet} komentar per tweet...[/dim]")
             tweets_data = await search_tweets_with_replies(
@@ -173,12 +230,14 @@ async def interactive_menu():
                 query=query,
                 product=sort_mode.capitalize(),
                 max_tweets=count,
-                replies_per_tweet=replies_per_tweet
+                replies_per_tweet=replies_per_tweet,
+                since_date=since_date,
+                until_date=until_date
             )
 
             if tweets_data:
                 show_preview_table(tweets_data)
-                export_data(tweets_data, prefix=f"search_with_replies_{query}", export_format=fmt)
+                export_data(tweets_data, prefix=file_prefix, export_format=fmt)
             else:
                 console.print("[yellow]Tidak ada data yang berhasil diambil.[/yellow]")
 
@@ -188,31 +247,50 @@ async def run_cli_args(args):
     """Eksekusi scraping langsung menggunakan command line arguments."""
     client = await get_twitter_client(force_login=args.force_login)
 
+    # Validasi filter tanggal jika diberikan
+    if args.since and not validate_date_format(args.since):
+        console.print(f"[bold red]Error: Format --since '{args.since}' tidak valid. Gunakan format YYYY-MM-DD.[/bold red]")
+        sys.exit(1)
+    if args.until and not validate_date_format(args.until):
+        console.print(f"[bold red]Error: Format --until '{args.until}' tidak valid. Gunakan format YYYY-MM-DD.[/bold red]")
+        sys.exit(1)
+
     if args.mode == "search":
         if not args.query:
             console.print("[bold red]Error: Argumen --query (-q) wajib diisi untuk mode search.[/bold red]")
             sys.exit(1)
         sort_choice = args.sort.capitalize() if args.sort else "Top"
-        tweets = await search_tweets(client, query=args.query, product=sort_choice, max_tweets=args.count)
+        file_prefix = build_export_prefix("search", args.query, args.since, args.until)
+        tweets = await search_tweets(
+            client,
+            query=args.query,
+            product=sort_choice,
+            max_tweets=args.count,
+            since_date=args.since,
+            until_date=args.until
+        )
         if tweets:
             show_preview_table(tweets)
-            export_data(tweets, prefix=f"search_{args.query}", export_format=args.format)
+            export_data(tweets, prefix=file_prefix, export_format=args.format)
 
     elif args.mode in ("search-replies", "combo"):
         if not args.query:
             console.print("[bold red]Error: Argumen --query (-q) wajib diisi untuk mode search-replies.[/bold red]")
             sys.exit(1)
         sort_choice = args.sort.capitalize() if args.sort else "Top"
+        file_prefix = build_export_prefix("search_with_replies", args.query, args.since, args.until)
         tweets = await search_tweets_with_replies(
             client=client,
             query=args.query,
             product=sort_choice,
             max_tweets=args.count,
-            replies_per_tweet=args.replies_per_tweet
+            replies_per_tweet=args.replies_per_tweet,
+            since_date=args.since,
+            until_date=args.until
         )
         if tweets:
             show_preview_table(tweets)
-            export_data(tweets, prefix=f"search_with_replies_{args.query}", export_format=args.format)
+            export_data(tweets, prefix=file_prefix, export_format=args.format)
 
     elif args.mode == "tweet":
         if not args.id:
@@ -235,6 +313,8 @@ def parse_arguments():
                         help="Mode operasi: search, search-replies (combo), tweet, login, atau menu interaktif")
     parser.add_argument("--query", "-q", type=str, help="Kata kunci atau hashtag untuk pencarian tweet")
     parser.add_argument("--sort", choices=["top", "latest", "media", "Top", "Latest", "Media"], default="top", help="Urutan pencarian tweet (default: top)")
+    parser.add_argument("--since", "-s", type=str, default=None, help="Filter tanggal mulai (format: YYYY-MM-DD, contoh: 2024-01-01) [opsional]")
+    parser.add_argument("--until", "-u", type=str, default=None, help="Filter tanggal akhir (format: YYYY-MM-DD, contoh: 2024-01-31) [opsional]")
     parser.add_argument("--count", "-c", type=int, default=50, help="Jumlah tweet utama yang diambil (default: 50)")
     parser.add_argument("--replies-per-tweet", "-rpt", type=int, default=5, help="Jumlah komentar per tweet untuk mode search-replies (default: 5)")
     parser.add_argument("--id", "-i", type=str, help="Tweet ID atau URL status tweet untuk mode tweet tunggal")

@@ -100,18 +100,41 @@ async def handle_rate_limit(response_headers: dict, checkpoint_data: List[Dict[s
         await asyncio.sleep(1)
     print("\n[+] Cooldown selesai, secara otomatis melanjutkan pengambilan data...")
 
+def build_search_query(base_query: str, since_date: Optional[str] = None, until_date: Optional[str] = None) -> str:
+    """
+    Constructs Twitter search query incorporating optional since: and until: date filters.
+    Avoids duplicate since: or until: operators if already present in base_query.
+    """
+    query = base_query.strip()
+    
+    if since_date:
+        s_val = since_date.strip()
+        if s_val and not re.search(r'\bsince:\S+', query, re.IGNORECASE):
+            query = f"{query} since:{s_val}"
+            
+    if until_date:
+        u_val = until_date.strip()
+        if u_val and not re.search(r'\buntil:\S+', query, re.IGNORECASE):
+            query = f"{query} until:{u_val}"
+            
+    return query
+
 async def search_tweets(
     client: TwitterClient,
     query: str,
     product: str = "Top",
     max_tweets: int = 100,
+    since_date: Optional[str] = None,
+    until_date: Optional[str] = None,
     delay_range: Tuple[float, float] = (config.DELAY_MIN, config.DELAY_MAX)
 ) -> List[Dict[str, Any]]:
     """
     Scrapes tweets based on a search query / keyword / hashtag (Main tweets only).
+    Supports optional since_date and until_date filters (format: YYYY-MM-DD).
     """
+    full_query = build_search_query(query, since_date=since_date, until_date=until_date)
     print(f"\n[+] Memulai pencarian tweet...")
-    print(f"    Query: '{query}' | Mode: {product} | Target: {max_tweets} tweets")
+    print(f"    Query: '{full_query}' | Mode: {product} | Target: {max_tweets} tweets")
 
     collected_tweets: List[Dict[str, Any]] = []
     seen_ids = set()
@@ -121,7 +144,7 @@ async def search_tweets(
 
     while len(collected_tweets) < max_tweets:
         variables = {
-            "rawQuery": query,
+            "rawQuery": full_query,
             "count": min(20, max_tweets - len(collected_tweets) + 5),
             "querySource": "typed_query",
             "product": product
@@ -328,14 +351,18 @@ async def search_tweets_with_replies(
     product: str = "Top",
     max_tweets: int = 100,
     replies_per_tweet: int = 5,
+    since_date: Optional[str] = None,
+    until_date: Optional[str] = None,
     delay_range: Tuple[float, float] = (config.DELAY_MIN, config.DELAY_MAX)
 ) -> List[Dict[str, Any]]:
     """
     Scrapes tweets based on query AND fetches comments/replies for EACH tweet.
     Supports large datasets (1000 - 1500+ items) with auto-checkpointing and rate limit pause/resume.
+    Supports optional since_date and until_date filters.
     """
+    full_query = build_search_query(query, since_date=since_date, until_date=until_date)
     print(f"\n[+] Memulai Pencarian Tweet + Ambil Komentar per Tweet...", flush=True)
-    print(f"    Query: '{query}' | Mode: {product}", flush=True)
+    print(f"    Query: '{full_query}' | Mode: {product}", flush=True)
     print(f"    Target Tweet Utama: {max_tweets} post", flush=True)
     print(f"    Target Komentar: Maksimal {replies_per_tweet} komentar per tweet", flush=True)
 
@@ -345,6 +372,8 @@ async def search_tweets_with_replies(
         query=query,
         product=product,
         max_tweets=max_tweets,
+        since_date=since_date,
+        until_date=until_date,
         delay_range=delay_range
     )
 

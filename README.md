@@ -196,27 +196,31 @@ Pilih Fitur Scraping:
   5. Keluar (Exit)
 ```
 
-> **Contoh Penggunaan Menu 3 (Kombinasi)**:
-> Jika Anda memilih menu **3**, masukkan kata kunci `Monas`, pilih urutan `top`, jumlah tweet `100`, dan jumlah komentar per tweet `5`:
-> - Program akan mencari 100 post `top` dengan kata `Monas`.
-> - Untuk setiap tweet:
->   - Jika tidak ada komentar (0), tidak diambil apa-apa.
->   - Jika ada 1 - 5 komentar, diambil semuanya.
->   - Jika ada lebih dari 5 komentar, diambil 5 komentar teratas.
-> - Hasilnya akan diekspor rapi ke CSV & JSON di folder `data/`.
+> **Contoh Penggunaan Menu 1 & 3 (Dengan Filter Tanggal Opsional)**:
+> - Masukkan kata kunci: `Monas`
+> - Urutan: `top` / `latest` / `media`
+> - Tanggal Mulai / Since (Opsional): `2024-01-01` (atau tekan `Enter` jika tanpa filter)
+> - Tanggal Akhir / Until (Opsional): `2024-01-31` (atau tekan `Enter` jika tanpa filter)
+> - Jumlah tweet: `100`
+> - Format ekspor: `csv` / `json` / `both`
+> - Hasilnya akan diekspor rapi ke CSV & JSON di folder `data/` dengan penamaan file yang menyertakan rentang tanggal.
 
 ---
 
 ### Mode 2: Command Line (Headless / Otomatisasi Skrip)
 
-#### A. Cari Tweet + Ambil Komentar per Tweet (Kombinasi)
+#### A. Cari Tweet + Ambil Komentar per Tweet (Kombinasi) dengan Filter Tanggal
 ```bash
-# Mengambil 100 tweet 'langit' urutan top beserta maks 5 komentar untuk setiap tweet
-python main.py --mode combo --query "langit" --sort top --count 100 --replies-per-tweet 5 --format csv
+# Mengambil 100 tweet 'langit' rentang tanggal 1 Jan 2024 - 31 Jan 2024 beserta maks 5 komentar per tweet
+python main.py --mode combo --query "langit" --since 2024-01-01 --until 2024-01-31 --sort top --count 100 --replies-per-tweet 5 --format csv
 ```
 
 #### B. Cari Tweet Saja (Hanya Tweet Utama)
 ```bash
+# Pencarian tweet dengan filter tanggal mulai saja
+python main.py --mode search --query "AI Indonesia" --since 2024-06-01 --sort latest --count 50 --format csv
+
+# Pencarian tweet tanpa filter tanggal (default)
 python main.py --mode search --query "AI Indonesia" --sort latest --count 50 --format csv
 ```
 
