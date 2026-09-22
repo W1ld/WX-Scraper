@@ -190,11 +190,15 @@ Pilihan menu yang tersedia:
 ==================================================
 Pilih Fitur Scraping:
   1. Cari Tweet berdasarkan Kata Kunci / Hashtag (Hanya Tweet Utama)
-  2. Ambil Detail Tweet Tunggal & Balasan / Komentar (dari URL / Tweet ID)
+  2. Ambil Detail Tweet & Balasan / Komentar (Bisa 1 atau Banyak Tweet / URL Sekaligus)
   3. Cari Tweet + Ambil Komentar/Replies untuk Setiap Tweet (Kombinasi Fitur 1 & 2)
-  4. Login Ulang & Perbarui file cookies.json
+  4. Perbarui Sesi Login (Masukkan auth_token & ct0 baru)
   5. Keluar (Exit)
 ```
+
+> **Contoh Penggunaan Menu 2 (Bisa 1 atau Banyak URL/Tweet ID)**:
+> - Masukkan URL Tweet atau Tweet ID: `https://x.com/user1/status/11111 https://x.com/user2/status/22222 33333` *(bisa dipisah spasi atau koma)*
+> - Program akan mendeteksi seluruh tweet target, mengambil tweet utama beserta seluruh replies-nya secara berurutan, dan menggabungkannya ke 1 file CSV/JSON yang rapi.
 
 > **Contoh Penggunaan Menu 1 & 3 (Dengan Filter Tanggal Opsional)**:
 > - Masukkan kata kunci: `Monas`
@@ -224,9 +228,13 @@ python main.py --mode search --query "AI Indonesia" --since 2024-06-01 --sort la
 python main.py --mode search --query "AI Indonesia" --sort latest --count 50 --format csv
 ```
 
-#### C. Detail Tweet Tunggal & Komentar
+#### C. Detail Tweet Tunggal atau Banyak Tweet Sekaligus (Batch)
 ```bash
+# 1 Tweet tunggal
 python main.py --mode tweet --id "https://x.com/username/status/1234567890123456789" --replies 50 --format csv
+
+# Banyak Tweet sekaligus (dipisahkan spasi atau koma)
+python main.py --mode tweet --id "https://x.com/a/status/111 https://x.com/b/status/222 333444555" --replies 50 --format csv
 ```
 
 #### D. Perbarui Sesi Cookies

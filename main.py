@@ -18,7 +18,13 @@ from rich.table import Table
 from rich.prompt import Prompt, IntPrompt
 
 from client_manager import get_twitter_client, prompt_and_save_cookies
-from scraper import search_tweets, search_tweets_with_replies, get_tweet_detail_and_replies
+from scraper import (
+    search_tweets,
+    search_tweets_with_replies,
+    get_tweet_detail_and_replies,
+    get_multiple_tweets_detail_and_replies,
+    extract_tweet_ids
+)
 from exporter import export_data
 import config
 
@@ -116,7 +122,7 @@ async def interactive_menu():
         display_banner()
         console.print("[bold yellow]Pilih Fitur Scraping:[/bold yellow]")
         console.print("  [bold green]1.[/bold green] Cari Tweet berdasarkan Kata Kunci / Hashtag (Hanya Tweet Utama)")
-        console.print("  [bold green]2.[/bold green] Ambil Detail Tweet Tunggal & Balasan / Komentar (dari URL / Tweet ID)")
+        console.print("  [bold green]2.[/bold green] Ambil Detail Tweet & Balasan / Komentar (Bisa 1 atau Banyak Tweet Sekaligus)")
         console.print("  [bold green]3.[/bold green] Cari Tweet + Ambil Komentar/Replies untuk Setiap Tweet (Kombinasi Fitur 1 & 2)")
         console.print("  [bold green]4.[/bold green] Perbarui Sesi Login (Masukkan auth_token & ct0 baru)")
         console.print("  [bold red]5.[/bold red] Keluar (Exit)")
@@ -177,27 +183,44 @@ async def interactive_menu():
             else:
                 console.print("[yellow]Tidak ada tweet yang berhasil diambil.[/yellow]")
 
-        # Option 2: Single Tweet Detail & Replies
+        # Option 2: Tweet Detail & Replies (Single or Multiple Batch)
         elif choice == "2":
-            console.print("\n[bold cyan]--- [2] DETAIL TWEET TUNGGAL & REPLIES ---[/bold cyan]")
-            tweet_input = Prompt.ask("[?] Masukkan URL Tweet atau Tweet ID")
+            console.print("\n[bold cyan]--- [2] DETAIL TWEET & REPLIES (BISA 1 ATAU BANYAK POSTINGAN) ---[/bold cyan]")
+            tweet_input = Prompt.ask("[?] Masukkan URL Tweet atau Tweet ID (bisa banyak, pisahkan dengan spasi/koma)")
             if not tweet_input.strip():
                 console.print("[red]Input tidak boleh kosong.[/red]")
                 continue
 
-            max_replies = IntPrompt.ask("[?] Jumlah balasan / replies maksimal yang diambil", default=50)
+            tweet_ids = extract_tweet_ids(tweet_input)
+            if not tweet_ids:
+                console.print("[bold red][X] Tidak ditemukan Tweet ID atau URL status tweet yang valid.[/bold red]")
+                pause_prompt("\nTekan Enter untuk kembali ke menu...")
+                continue
+
+            if len(tweet_ids) > 1:
+                console.print(f"[bold green][+] Terdeteksi {len(tweet_ids)} tweet target untuk diproses.[/bold green]")
+
+            max_replies = IntPrompt.ask("[?] Jumlah balasan / replies maksimal per tweet", default=50)
             fmt = Prompt.ask("[?] Format ekspor", choices=["both", "csv", "json"], default="csv")
 
-            with console.status("[bold green]Sedang mengambil detail tweet & replies...[/bold green]", spinner="dots"):
-                result = await get_tweet_detail_and_replies(client, tweet_id_or_url=tweet_input, max_replies=max_replies)
+            if len(tweet_ids) == 1:
+                prefix = f"tweet_{tweet_ids[0]}"
+                with console.status("[bold green]Sedang mengambil detail tweet & replies...[/bold green]", spinner="dots"):
+                    result = await get_tweet_detail_and_replies(client, tweet_id_or_url=tweet_ids[0], max_replies=max_replies)
+                main_tweet = result.get("main_tweet")
+                replies = result.get("replies", [])
+                all_data = ([main_tweet] if main_tweet else []) + replies
+            else:
+                prefix = f"batch_tweets_{len(tweet_ids)}_items"
+                all_data = await get_multiple_tweets_detail_and_replies(
+                    client=client,
+                    tweet_ids_or_urls=tweet_ids,
+                    max_replies=max_replies
+                )
 
-            main_tweet = result.get("main_tweet")
-            replies = result.get("replies", [])
-
-            if main_tweet:
-                all_data = [main_tweet] + replies
+            if all_data:
                 show_preview_table(all_data)
-                export_data(all_data, prefix=f"tweet_{main_tweet['tweet_id']}", export_format=fmt)
+                export_data(all_data, prefix=prefix, export_format=fmt)
             else:
                 console.print("[yellow]Tweet tidak ditemukan atau gagal diambil.[/yellow]")
 
@@ -296,13 +319,31 @@ async def run_cli_args(args):
         if not args.id:
             console.print("[bold red]Error: Argumen --id (-i) wajib diisi untuk mode tweet.[/bold red]")
             sys.exit(1)
-        result = await get_tweet_detail_and_replies(client, tweet_id_or_url=args.id, max_replies=args.replies)
-        main_tweet = result.get("main_tweet")
-        replies = result.get("replies", [])
-        if main_tweet:
-            all_data = [main_tweet] + replies
+
+        tweet_ids = extract_tweet_ids(args.id)
+        if not tweet_ids:
+            console.print("[bold red]Error: Tidak ditemukan Tweet ID atau URL yang valid dari argumen --id.[/bold red]")
+            sys.exit(1)
+
+        if len(tweet_ids) == 1:
+            prefix = f"tweet_{tweet_ids[0]}"
+            result = await get_tweet_detail_and_replies(client, tweet_id_or_url=tweet_ids[0], max_replies=args.replies)
+            main_tweet = result.get("main_tweet")
+            replies = result.get("replies", [])
+            all_data = ([main_tweet] if main_tweet else []) + replies
+        else:
+            prefix = f"batch_tweets_{len(tweet_ids)}_items"
+            all_data = await get_multiple_tweets_detail_and_replies(
+                client=client,
+                tweet_ids_or_urls=tweet_ids,
+                max_replies=args.replies
+            )
+
+        if all_data:
             show_preview_table(all_data)
-            export_data(all_data, prefix=f"tweet_{main_tweet['tweet_id']}", export_format=args.format)
+            export_data(all_data, prefix=prefix, export_format=args.format)
+        else:
+            console.print("[yellow]Tidak ada data tweet yang berhasil diambil.[/yellow]")
 
     elif args.mode == "login":
         await prompt_and_save_cookies(client)
@@ -317,8 +358,8 @@ def parse_arguments():
     parser.add_argument("--until", "-u", type=str, default=None, help="Filter tanggal akhir (format: YYYY-MM-DD, contoh: 2024-01-31) [opsional]")
     parser.add_argument("--count", "-c", type=int, default=50, help="Jumlah tweet utama yang diambil (default: 50)")
     parser.add_argument("--replies-per-tweet", "-rpt", type=int, default=5, help="Jumlah komentar per tweet untuk mode search-replies (default: 5)")
-    parser.add_argument("--id", "-i", type=str, help="Tweet ID atau URL status tweet untuk mode tweet tunggal")
-    parser.add_argument("--replies", "-r", type=int, default=50, help="Jumlah replies maksimal untuk mode tweet tunggal (default: 50)")
+    parser.add_argument("--id", "-i", type=str, help="Tweet ID atau URL status tweet (bisa 1 atau banyak dipisahkan spasi/koma)")
+    parser.add_argument("--replies", "-r", type=int, default=50, help="Jumlah replies maksimal untuk mode tweet (default: 50)")
     parser.add_argument("--format", "-f", choices=["both", "csv", "json"], default="csv", help="Format output (default: csv)")
     parser.add_argument("--force-login", action="store_true", help="Paksa perbarui sesi login (auth_token & ct0)")
     return parser.parse_args()

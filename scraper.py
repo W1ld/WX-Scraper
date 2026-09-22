@@ -435,6 +435,93 @@ def extract_tweet_id(input_str: str) -> str:
     digits = re.sub(r"\D", "", input_str.strip())
     return digits if digits else input_str.strip()
 
+def extract_tweet_ids(raw_input: str) -> List[str]:
+    """
+    Extracts multiple unique numeric tweet IDs from a string containing
+    URLs or IDs separated by spaces, commas, semicolons, or newlines.
+    Preserves original order.
+    """
+    if not raw_input or not raw_input.strip():
+        return []
+    
+    tokens = re.split(r'[,;\s]+', raw_input.strip())
+    extracted_ids = []
+    seen = set()
+
+    for token in tokens:
+        token = token.strip()
+        if not token:
+            continue
+        tid = extract_tweet_id(token)
+        if tid and tid.isdigit() and tid not in seen:
+            seen.add(tid)
+            extracted_ids.append(tid)
+
+    return extracted_ids
+
+async def get_multiple_tweets_detail_and_replies(
+    client: TwitterClient,
+    tweet_ids_or_urls: List[str],
+    max_replies: int = 50,
+    delay_range: Tuple[float, float] = (config.DELAY_MIN, config.DELAY_MAX)
+) -> List[Dict[str, Any]]:
+    """
+    Scrapes multiple tweets and their replies sequentially.
+    Combines all main tweets and replies into a single unified dataset.
+    """
+    valid_ids = []
+    seen = set()
+    for item in tweet_ids_or_urls:
+        tid = extract_tweet_id(item)
+        if tid and tid not in seen:
+            seen.add(tid)
+            valid_ids.append(tid)
+
+    if not valid_ids:
+        print("[X] Tidak ada Tweet ID / URL valid yang ditemukan.")
+        return []
+
+    print(f"\n[+] Memulai batch scraping untuk {len(valid_ids)} tweet (Maks {max_replies} replies/tweet)...", flush=True)
+
+    combined_data: List[Dict[str, Any]] = []
+    total_tweets_success = 0
+    total_replies_success = 0
+
+    for idx, tid in enumerate(valid_ids, 1):
+        print(f"\n[{idx}/{len(valid_ids)}] Memproses Tweet ID: {tid}...", flush=True)
+        res = await get_tweet_detail_and_replies(
+            client=client,
+            tweet_id_or_url=tid,
+            max_replies=max_replies,
+            delay_range=delay_range
+        )
+        main_tweet = res.get("main_tweet")
+        replies = res.get("replies", [])
+
+        if main_tweet:
+            combined_data.append(main_tweet)
+            total_tweets_success += 1
+            if replies:
+                combined_data.extend(replies)
+                total_replies_success += len(replies)
+        else:
+            print(f"[!] Tweet ID {tid} gagal diambil atau tidak ditemukan.", flush=True)
+
+        # Checkpoint otomatis setiap 10 tweet
+        if idx % 10 == 0:
+            save_checkpoint(combined_data, prefix=f"batch_tweets_{len(valid_ids)}")
+
+        if idx < len(valid_ids):
+            delay = random.uniform(*delay_range)
+            await asyncio.sleep(delay)
+
+    print(f"\n[OK] Batch Scraping Selesai!", flush=True)
+    print(f"    Total Tweet Utama Berhasil: {total_tweets_success}/{len(valid_ids)}", flush=True)
+    print(f"    Total Komentar Berhasil: {total_replies_success}", flush=True)
+    print(f"    Total Baris Data Terkumpul: {len(combined_data)}", flush=True)
+
+    return combined_data
+
 async def get_tweet_detail_and_replies(
     client: TwitterClient,
     tweet_id_or_url: str,
