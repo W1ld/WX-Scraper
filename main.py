@@ -98,7 +98,7 @@ def validate_date_format(date_str: str) -> bool:
 def prompt_optional_date(prompt_text: str) -> Optional[str]:
     """Menanyakan input tanggal opsional (format YYYY-MM-DD), pengguna bisa menekan Enter untuk melewati."""
     while True:
-        val = Prompt.ask(prompt_text, default="").strip()
+        val = Prompt.ask(prompt_text, default="", show_default=False).strip()
         if not val:
             return None
         if validate_date_format(val):
@@ -127,7 +127,13 @@ async def interactive_menu():
         console.print("  [bold green]4.[/bold green] Perbarui Sesi Login (Masukkan auth_token & ct0 baru)")
         console.print("  [bold red]5.[/bold red] Keluar (Exit)")
 
-        choice = Prompt.ask("\n[?] Masukkan pilihan Anda", choices=["1", "2", "3", "4", "5"], default="1")
+        choice = Prompt.ask(
+            "\n[?] Masukkan pilihan Anda",
+            choices=["1", "2", "3", "4", "5"],
+            default="5",
+            show_choices=False,
+            show_default=False,
+        )
 
         if choice == "5":
             console.print("[bold green]Terima kasih telah menggunakan WX Scraper![/bold green]")
@@ -148,22 +154,40 @@ async def interactive_menu():
         # Option 1: Search Query Only
         if choice == "1":
             console.print("\n[bold cyan]--- [1] PENCARIAN TWEET (HANYA TWEET UTAMA) ---[/bold cyan]")
-            query = Prompt.ask("[?] Masukkan kata kunci / hashtag (contoh: 'Monas' atau '#TimnasDay')")
+            query = Prompt.ask("[?] Masukkan kata kunci")
             if not query.strip():
                 console.print("[red]Kata kunci tidak boleh kosong.[/red]")
                 continue
 
-            sort_mode = Prompt.ask("[?] Urutan data", choices=["top", "latest", "media"], default="top")
+            sort_mode = Prompt.ask(
+                "[?] Urutan data",
+                choices=["top", "latest", "media"],
+                default="top",
+                show_choices=False,
+                show_default=False,
+            )
             since_date = prompt_optional_date("[?] Filter tanggal mulai / Since (YYYY-MM-DD, tekan Enter untuk lewati)")
             until_date = prompt_optional_date("[?] Filter tanggal akhir / Until (YYYY-MM-DD, tekan Enter untuk lewati)")
 
             if since_date and until_date and since_date > until_date:
                 console.print(f"[bold yellow][!] Peringatan: Tanggal mulai ({since_date}) lebih besar dari tanggal akhir ({until_date}).[/bold yellow]")
-                if Prompt.ask("[?] Tetap lanjutkan pencarian?", choices=["y", "n"], default="y") != "y":
+                if Prompt.ask(
+                    "[?] Tetap lanjutkan pencarian?",
+                    choices=["y", "n"],
+                    default="y",
+                    show_choices=False,
+                    show_default=False,
+                ) != "y":
                     continue
 
-            count = IntPrompt.ask("[?] Jumlah tweet yang ingin diambil", default=50)
-            fmt = Prompt.ask("[?] Format ekspor", choices=["both", "csv", "json"], default="csv")
+            count = IntPrompt.ask("[?] Jumlah tweet yang ingin diambil", default=50, show_default=False)
+            fmt = Prompt.ask(
+                "[?] Format ekspor",
+                choices=["both", "csv", "json"],
+                default="csv",
+                show_choices=False,
+                show_default=False,
+            )
 
             file_prefix = build_export_prefix("search", query, since_date, until_date)
 
@@ -200,8 +224,14 @@ async def interactive_menu():
             if len(tweet_ids) > 1:
                 console.print(f"[bold green][+] Terdeteksi {len(tweet_ids)} tweet target untuk diproses.[/bold green]")
 
-            max_replies = IntPrompt.ask("[?] Jumlah balasan / replies maksimal per tweet", default=50)
-            fmt = Prompt.ask("[?] Format ekspor", choices=["both", "csv", "json"], default="csv")
+            max_replies = IntPrompt.ask("[?] Jumlah balasan / replies maksimal per tweet", default=50, show_default=False)
+            fmt = Prompt.ask(
+                "[?] Format ekspor",
+                choices=["both", "csv", "json"],
+                default="csv",
+                show_choices=False,
+                show_default=False,
+            )
 
             if len(tweet_ids) == 1:
                 prefix = f"tweet_{tweet_ids[0]}"
@@ -227,23 +257,41 @@ async def interactive_menu():
         # Option 3: Search Query + Replies per Tweet
         elif choice == "3":
             console.print("\n[bold cyan]--- [3] CARI TWEET + AMBIL KOMENTAR SETIAP TWEET ---[/bold cyan]")
-            query = Prompt.ask("[?] Masukkan kata kunci / hashtag (contoh: 'Monas' atau '#TimnasDay')")
+            query = Prompt.ask("[?] Masukkan kata kunci")
             if not query.strip():
                 console.print("[red]Kata kunci tidak boleh kosong.[/red]")
                 continue
 
-            sort_mode = Prompt.ask("[?] Urutan tweet", choices=["top", "latest", "media"], default="top")
+            sort_mode = Prompt.ask(
+                "[?] Urutan tweet",
+                choices=["top", "latest", "media"],
+                default="top",
+                show_choices=False,
+                show_default=False,
+            )
             since_date = prompt_optional_date("[?] Filter tanggal mulai / Since (YYYY-MM-DD, tekan Enter untuk lewati)")
             until_date = prompt_optional_date("[?] Filter tanggal akhir / Until (YYYY-MM-DD, tekan Enter untuk lewati)")
 
             if since_date and until_date and since_date > until_date:
                 console.print(f"[bold yellow][!] Peringatan: Tanggal mulai ({since_date}) lebih besar dari tanggal akhir ({until_date}).[/bold yellow]")
-                if Prompt.ask("[?] Tetap lanjutkan pencarian?", choices=["y", "n"], default="y") != "y":
+                if Prompt.ask(
+                    "[?] Tetap lanjutkan pencarian?",
+                    choices=["y", "n"],
+                    default="y",
+                    show_choices=False,
+                    show_default=False,
+                ) != "y":
                     continue
 
-            count = IntPrompt.ask("[?] Jumlah tweet utama yang ingin dicari", default=100)
-            replies_per_tweet = IntPrompt.ask("[?] Jumlah komentar per tweet yang ingin diambil (maksimal)", default=5)
-            fmt = Prompt.ask("[?] Format ekspor", choices=["both", "csv", "json"], default="csv")
+            count = IntPrompt.ask("[?] Jumlah tweet utama yang ingin dicari", default=100, show_default=False)
+            replies_per_tweet = IntPrompt.ask("[?] Jumlah komentar per tweet yang ingin diambil (maksimal)", default=5, show_default=False)
+            fmt = Prompt.ask(
+                "[?] Format ekspor",
+                choices=["both", "csv", "json"],
+                default="csv",
+                show_choices=False,
+                show_default=False,
+            )
 
             file_prefix = build_export_prefix("search_with_replies", query, since_date, until_date)
 
