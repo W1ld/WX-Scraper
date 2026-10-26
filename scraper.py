@@ -3,642 +3,465 @@ import json
 import random
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+import httpx
 import config
-from client_manager import TwitterClient
-from parser import parse_tweet, extract_tweet_from_result
+from client_manager import InstagramClient, IG_APP_ID
+from parser import parse_user_profile, parse_post_item, parse_comment_item
 from exporter import save_checkpoint
 
-SEARCH_TIMELINE_URL = "https://x.com/i/api/graphql/hyPfJYJ_XAtDYoslQc-Rgg/SearchTimeline"
-TWEET_DETAIL_URL = "https://x.com/i/api/graphql/XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
+# Karakter Base64 URL untuk konversi shortcode <-> media_id Instagram
+IG_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
-GQL_FEATURES = {
-    "rweb_tipjar_consumption_enabled": True,
-    "responsive_web_graphql_exclude_directive_enabled": True,
-    "verified_phone_label_enabled": False,
-    "creator_subscriptions_tweet_preview_api_enabled": True,
-    "responsive_web_graphql_timeline_navigation_enabled": True,
-    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-    "communities_web_enable_tweet_community_results_fetch": True,
-    "c9s_tweet_anatomy_moderator_badge_enabled": True,
-    "articles_preview_enabled": True,
-    "responsive_web_edit_tweet_api_enabled": True,
-    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-    "view_counts_everywhere_api_enabled": True,
-    "longform_notetweets_consumption_enabled": True,
-    "responsive_web_twitter_article_tweet_consumption_enabled": True,
-    "tweet_awards_web_tipping_enabled": False,
-    "creator_subscriptions_quote_tweet_preview_enabled": False,
-    "freedom_of_speech_not_reach_fetch_enabled": True,
-    "standardized_nudges_misinfo": True,
-    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-    "rweb_video_timestamps_enabled": True,
-    "longform_notetweets_rich_text_read_enabled": True,
-    "longform_notetweets_inline_media_enabled": True,
-    "responsive_web_enhance_cards_enabled": False
-}
-
-def extract_cursor_from_instructions(instructions: List[dict], cursor_type: str = "Bottom") -> Optional[str]:
-    """
-    Extracts the bottom/top cursor token across all GraphQL instructions 
-    (TimelineAddEntries, TimelineReplaceEntry, TimelineAddToModule).
-    """
-    target_type = cursor_type.lower()
-    for inst in instructions:
-        itype = inst.get("type", "")
-        if itype == "TimelineAddEntries":
-            for entry in inst.get("entries", []):
-                eid = entry.get("entryId", "").lower()
-                content = entry.get("content", {})
-                ctype = str(content.get("cursorType") or content.get("itemContent", {}).get("cursorType") or "").lower()
-                if target_type in eid or ctype == target_type or (target_type == "bottom" and "showmore" in eid):
-                    val = (
-                        content.get("value")
-                        or content.get("itemContent", {}).get("value")
-                        or content.get("operation", {}).get("cursor", {}).get("value")
-                    )
-                    if val:
-                        return val
-
-        elif itype == "TimelineReplaceEntry":
-            entry = inst.get("entry", {})
-            eid = (entry.get("entryId", "") or inst.get("entryIdToReplace", "") or inst.get("entry_id_to_replace", "")).lower()
-            content = entry.get("content", {})
-            ctype = str(content.get("cursorType") or content.get("itemContent", {}).get("cursorType") or "").lower()
-            if target_type in eid or ctype == target_type or (target_type == "bottom" and "showmore" in eid):
-                val = (
-                    content.get("value")
-                    or content.get("itemContent", {}).get("value")
-                    or content.get("operation", {}).get("cursor", {}).get("value")
-                )
-                if val:
-                    return val
-
-    return None
-
-async def handle_rate_limit(response_headers: dict, checkpoint_data: List[Dict[str, Any]] | None = None, prefix: str = "backup"):
-    """
-    Handles Twitter rate limit (HTTP 429) by waiting until the reset timestamp.
-    Also automatically saves a temporary checkpoint backup to disk.
-    """
-    if checkpoint_data:
-        saved_path = save_checkpoint(checkpoint_data, prefix=prefix)
-        if saved_path:
-            print(f"\n[Checkpoint] {len(checkpoint_data)} data sementara otomatis diamankan di: {saved_path}")
-
-    reset_header = response_headers.get("x-rate-limit-reset")
-    if reset_header and reset_header.isdigit():
-        reset_timestamp = int(reset_header)
-        wait_seconds = max(int(reset_timestamp - time.time()) + 5, 10)
-    else:
-        wait_seconds = 900 # default 15 minutes
-
-    print(f"\n[!] Terkena Rate Limit (HTTP 429). Menunggu selama {wait_seconds} detik hingga kuota di-reset...")
-    for remaining in range(wait_seconds, 0, -1):
-        mins, secs = divmod(remaining, 60)
-        print(f"\r    Cooldown rate limit: {mins:02d}:{secs:02d} tersisa ({remaining}s)...", end="", flush=True)
-        await asyncio.sleep(1)
-    print("\n[+] Cooldown selesai, secara otomatis melanjutkan pengambilan data...")
-
-def build_search_query(base_query: str, since_date: Optional[str] = None, until_date: Optional[str] = None) -> str:
-    """
-    Constructs Twitter search query incorporating optional since: and until: date filters.
-    Avoids duplicate since: or until: operators if already present in base_query.
-    """
-    query = base_query.strip()
-    
-    if since_date:
-        s_val = since_date.strip()
-        if s_val and not re.search(r'\bsince:\S+', query, re.IGNORECASE):
-            query = f"{query} since:{s_val}"
-            
-    if until_date:
-        u_val = until_date.strip()
-        if u_val and not re.search(r'\buntil:\S+', query, re.IGNORECASE):
-            query = f"{query} until:{u_val}"
-            
-    return query
-
-async def search_tweets(
-    client: TwitterClient,
-    query: str,
-    product: str = "Top",
-    max_tweets: int = 100,
-    since_date: Optional[str] = None,
-    until_date: Optional[str] = None,
-    delay_range: Tuple[float, float] = (config.DELAY_MIN, config.DELAY_MAX)
-) -> List[Dict[str, Any]]:
-    """
-    Scrapes tweets based on a search query / keyword / hashtag (Main tweets only).
-    Supports optional since_date and until_date filters (format: YYYY-MM-DD).
-    """
-    full_query = build_search_query(query, since_date=since_date, until_date=until_date)
-    print(f"\n[+] Memulai pencarian tweet...")
-    print(f"    Query: '{full_query}' | Mode: {product} | Target: {max_tweets} tweets")
-
-    collected_tweets: List[Dict[str, Any]] = []
-    seen_ids = set()
-    cursor = None
-    empty_batches_count = 0
-    http = client.get_http_client()
-
-    while len(collected_tweets) < max_tweets:
-        variables = {
-            "rawQuery": full_query,
-            "count": min(20, max_tweets - len(collected_tweets) + 5),
-            "querySource": "typed_query",
-            "product": product
-        }
-        if cursor:
-            variables["cursor"] = cursor
-
-        payload = {
-            "variables": variables,
-            "features": GQL_FEATURES,
-            "queryId": "hyPfJYJ_XAtDYoslQc-Rgg"
-        }
-
-        try:
-            r = await http.post(SEARCH_TIMELINE_URL, json=payload)
-        except Exception as e:
-            print(f"[!] Network error: {e}. Mencoba lagi dalam 5 detik...")
-            await asyncio.sleep(5)
+def shortcode_to_media_id(shortcode: str) -> int:
+    """Mengonversi shortcode postingan Instagram (misal: 'DBabc123') menjadi ID angka media_id."""
+    media_id = 0
+    for char in shortcode:
+        if char not in IG_ALPHABET:
             continue
+        media_id = media_id * 64 + IG_ALPHABET.index(char)
+    return media_id
 
-        if r.status_code == 429:
-            await handle_rate_limit(dict(r.headers), checkpoint_data=collected_tweets, prefix=f"search_{query}")
-            continue
-        elif r.status_code != 200:
-            print(f"[X] Request gagal dengan status code {r.status_code}: {r.text[:200]}")
-            break
+def media_id_to_shortcode(media_id: int) -> str:
+    """Mengonversi ID angka media_id Instagram menjadi shortcode URL."""
+    shortcode = ""
+    while media_id > 0:
+        media_id, rem = divmod(media_id, 64)
+        shortcode = IG_ALPHABET[rem] + shortcode
+    return shortcode
 
-        data = r.json()
-        instructions = data.get("data", {}).get("search_by_raw_query", {}).get("search_timeline", {}).get("timeline", {}).get("instructions", [])
-        
-        entries = []
-        for inst in instructions:
-            if inst.get("type") == "TimelineAddEntries":
-                entries = inst.get("entries", [])
-                break
-
-        if not entries and not instructions:
-            print("[-] Tidak ada tweet baru ditemukan.")
-            break
-
-        new_cursor = extract_cursor_from_instructions(instructions, cursor_type="Bottom")
-        new_batch_count = 0
-
-        for entry in entries:
-            entry_id = entry.get("entryId", "")
-            content = entry.get("content", {})
-
-            # 1. Single tweet entry
-            if entry_id.startswith("tweet-") or entry_id.startswith("sq-I-t-"):
-                tweet_results = content.get("itemContent", {}).get("tweet_results", {}).get("result", {})
-                parsed = extract_tweet_from_result(tweet_results, row_type="main_tweet")
-                if parsed and parsed["tweet_id"] not in seen_ids:
-                    seen_ids.add(parsed["tweet_id"])
-                    collected_tweets.append(parsed)
-                    new_batch_count += 1
-                    if len(collected_tweets) >= max_tweets:
-                        break
-
-            # 2. Module entries (items list)
-            elif "items" in content:
-                for item in content.get("items", []):
-                    item_content = item.get("item", {}).get("itemContent", {})
-                    tweet_results = item_content.get("tweet_results", {}).get("result", {})
-                    parsed = extract_tweet_from_result(tweet_results, row_type="main_tweet")
-                    if parsed and parsed["tweet_id"] not in seen_ids:
-                        seen_ids.add(parsed["tweet_id"])
-                        collected_tweets.append(parsed)
-                        new_batch_count += 1
-                        if len(collected_tweets) >= max_tweets:
-                            break
-
-        print(f"[*] Terkumpul: {len(collected_tweets)}/{max_tweets} tweets (+{new_batch_count} baru)")
-
-        # Auto save checkpoint setiap kelipatan 100 data
-        if len(collected_tweets) % 100 == 0:
-            save_checkpoint(collected_tweets, prefix=f"search_{query}")
-
-        if len(collected_tweets) >= max_tweets:
-            break
-
-        # Check empty batch and cursor end conditions
-        if new_batch_count == 0:
-            empty_batches_count += 1
-            if empty_batches_count >= 3:
-                print("[-] Tidak ada tweet baru setelah 3 percobaan halaman (end of results).")
-                break
-        else:
-            empty_batches_count = 0
-
-        if not new_cursor or new_cursor == cursor:
-            print("[-] Tidak ada halaman hasil berikutnya (end of results).")
-            break
-
-        cursor = new_cursor
-        delay = random.uniform(*delay_range)
-        await asyncio.sleep(delay)
-
-    print(f"[OK] Selesai. Total {len(collected_tweets)} tweet berhasil dikumpulkan.")
-    return collected_tweets
-
-async def fetch_tweet_replies(
-    client: TwitterClient,
-    tweet_id: str,
-    max_replies: int = 5,
-    delay_range: Tuple[float, float] = (config.DELAY_MIN, config.DELAY_MAX)
-) -> List[Dict[str, Any]]:
-    """
-    Fetches up to max_replies for a specific tweet using TweetDetail endpoint.
-    """
-    if max_replies <= 0:
-        return []
-
-    http = client.get_http_client()
-    replies: List[Dict[str, Any]] = []
-    seen_reply_ids = set()
-    cursor = None
-
-    while len(replies) < max_replies:
-        variables = {
-            "focalTweetId": tweet_id,
-            "with_rux_injections": False,
-            "includePromotedContent": False,
-            "withCommunity": True,
-            "withQuickPromoteEligibilityTweetFields": True,
-            "withBirdwatchNotes": True,
-            "withVoice": True,
-            "withV2Timeline": True
-        }
-        if cursor:
-            variables["cursor"] = cursor
-
-        payload = {
-            "variables": variables,
-            "features": GQL_FEATURES,
-            "queryId": "XMOz5h24KAZ86qKffKTLdQ"
-        }
-
-        try:
-            r = await http.post(TWEET_DETAIL_URL, json=payload)
-        except Exception:
-            break
-
-        if r.status_code == 429:
-            await handle_rate_limit(dict(r.headers))
-            continue
-        elif r.status_code != 200:
-            break
-
-        data = r.json()
-        instructions = data.get("data", {}).get("threaded_conversation_with_injections_v2", {}).get("instructions", [])
-        
-        entries = []
-        for inst in instructions:
-            if inst.get("type") == "TimelineAddEntries":
-                entries = inst.get("entries", [])
-                break
-
-        if not entries and not instructions:
-            break
-
-        new_cursor = extract_cursor_from_instructions(instructions, cursor_type="Bottom")
-        new_batch_count = 0
-
-        for entry in entries:
-            entry_id = entry.get("entryId", "")
-            # Check reply items
-            if entry_id.startswith("conversationthread-"):
-                items = entry.get("content", {}).get("items", [])
-                for item in items:
-                    item_content = item.get("item", {}).get("itemContent", {})
-                    tweet_results = item_content.get("tweet_results", {}).get("result", {})
-                    parsed = extract_tweet_from_result(tweet_results, row_type="reply", parent_tweet_id=tweet_id)
-                    if parsed and parsed["tweet_id"] != tweet_id and parsed["tweet_id"] not in seen_reply_ids:
-                        seen_reply_ids.add(parsed["tweet_id"])
-                        replies.append(parsed)
-                        new_batch_count += 1
-                        if len(replies) >= max_replies:
-                            break
-
-            elif (entry_id.startswith("tweet-") or entry_id.startswith("sq-I-t-")) and entry_id != f"tweet-{tweet_id}":
-                tweet_results = entry.get("content", {}).get("itemContent", {}).get("tweet_results", {}).get("result", {})
-                parsed = extract_tweet_from_result(tweet_results, row_type="reply", parent_tweet_id=tweet_id)
-                if parsed and parsed["tweet_id"] != tweet_id and parsed["tweet_id"] not in seen_reply_ids:
-                    seen_reply_ids.add(parsed["tweet_id"])
-                    replies.append(parsed)
-                    new_batch_count += 1
-                    if len(replies) >= max_replies:
-                        break
-
-            if len(replies) >= max_replies:
-                break
-
-        # Stop if no new replies in this page or target reached
-        if new_batch_count == 0 or len(replies) >= max_replies or not new_cursor or new_cursor == cursor:
-            break
-        cursor = new_cursor
-        await asyncio.sleep(random.uniform(*delay_range))
-
-    return replies[:max_replies]
-
-async def search_tweets_with_replies(
-    client: TwitterClient,
-    query: str,
-    product: str = "Top",
-    max_tweets: int = 100,
-    replies_per_tweet: int = 5,
-    since_date: Optional[str] = None,
-    until_date: Optional[str] = None,
-    delay_range: Tuple[float, float] = (config.DELAY_MIN, config.DELAY_MAX)
-) -> List[Dict[str, Any]]:
-    """
-    Scrapes tweets based on query AND fetches comments/replies for EACH tweet.
-    Supports large datasets (1000 - 1500+ items) with auto-checkpointing and rate limit pause/resume.
-    Supports optional since_date and until_date filters.
-    """
-    full_query = build_search_query(query, since_date=since_date, until_date=until_date)
-    print(f"\n[+] Memulai Pencarian Tweet + Ambil Komentar per Tweet...", flush=True)
-    print(f"    Query: '{full_query}' | Mode: {product}", flush=True)
-    print(f"    Target Tweet Utama: {max_tweets} post", flush=True)
-    print(f"    Target Komentar: Maksimal {replies_per_tweet} komentar per tweet", flush=True)
-
-    # Step 1: Collect main tweets from search
-    main_tweets = await search_tweets(
-        client=client,
-        query=query,
-        product=product,
-        max_tweets=max_tweets,
-        since_date=since_date,
-        until_date=until_date,
-        delay_range=delay_range
-    )
-
-    if not main_tweets:
-        return []
-
-    print(f"\n[OK] Berhasil mengumpulkan {len(main_tweets)} tweet utama.", flush=True)
-    print(f"[+] Sekarang memproses komentar untuk masing-masing tweet (maks {replies_per_tweet} komentar/tweet)...\n", flush=True)
-
-    combined_dataset: List[Dict[str, Any]] = []
-    total_comments_collected = 0
-
-    # Step 2: For each tweet, fetch replies
-    for idx, main_tweet in enumerate(main_tweets, 1):
-        combined_dataset.append(main_tweet)
-        tweet_id = main_tweet["tweet_id"]
-        author = main_tweet.get("username", "unknown")
-        reported_replies = int(main_tweet.get("replies", 0) or 0)
-
-        # Cek jika tidak membutuhkan replies atau jika tweet memang tidak memiliki komentar
-        if replies_per_tweet > 0:
-            if reported_replies == 0:
-                print(f"  [{idx}/{len(main_tweets)}] Tweet ID {tweet_id} (@{author}): 0 komentar (dilewati).", flush=True)
-            else:
-                target_count = min(replies_per_tweet, reported_replies)
-                print(f"  [{idx}/{len(main_tweets)}] Mengambil komentar tweet ID {tweet_id} (@{author}, ada ~{reported_replies} komentar)...", flush=True)
-                tweet_replies = await fetch_tweet_replies(
-                    client=client,
-                    tweet_id=tweet_id,
-                    max_replies=target_count,
-                    delay_range=delay_range
-                )
-                combined_dataset.extend(tweet_replies)
-                total_comments_collected += len(tweet_replies)
-                print(f"       -> Berhasil mengambil {len(tweet_replies)} komentar.", flush=True)
-                # Delay hanya jika benar-benar melakukan HTTP request ke server Twitter
-                if idx < len(main_tweets):
-                    delay = random.uniform(*delay_range)
-                    await asyncio.sleep(delay)
-        else:
-            print(f"  [{idx}/{len(main_tweets)}] Tweet ID {tweet_id} (@{author}) dicatat.", flush=True)
-
-        # Simpan checkpoint otomatis setiap kelipatan 50 tweet utama
-        if idx % 50 == 0:
-            save_checkpoint(combined_dataset, prefix=f"combo_{query}")
-
-    print(f"\n[OK] Proses Selesai!", flush=True)
-    print(f"    Total Tweet Utama: {len(main_tweets)}", flush=True)
-    print(f"    Total Komentar: {total_comments_collected}", flush=True)
-    print(f"    Total Baris Data: {len(combined_dataset)}", flush=True)
-
-    return combined_dataset
-
-def extract_tweet_id(input_str: str) -> str:
-    """Extracts numeric tweet ID from either a raw ID string or a full Twitter URL."""
-    match = re.search(r"status/(\d+)", input_str)
+def extract_shortcode(url_or_code: str) -> str:
+    """Mengekstrak shortcode bersih dari URL postingan atau teks kode yang diinput user."""
+    cleaned = url_or_code.strip()
+    match = re.search(r"instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_-]+)", cleaned)
     if match:
         return match.group(1)
-    digits = re.sub(r"\D", "", input_str.strip())
-    return digits if digits else input_str.strip()
-
-def extract_tweet_ids(raw_input: str) -> List[str]:
-    """
-    Extracts multiple unique numeric tweet IDs from a string containing
-    URLs or IDs separated by spaces, commas, semicolons, or newlines.
-    Preserves original order.
-    """
-    if not raw_input or not raw_input.strip():
-        return []
     
-    tokens = re.split(r'[,;\s]+', raw_input.strip())
-    extracted_ids = []
-    seen = set()
+    # Jika pengguna hanya memasukkan shortcode mentah
+    cleaned = cleaned.strip("/ ")
+    if "/" not in cleaned and len(cleaned) >= 3:
+        return cleaned
+        
+    return cleaned
 
-    for token in tokens:
-        token = token.strip()
-        if not token:
-            continue
-        tid = extract_tweet_id(token)
-        if tid and tid.isdigit() and tid not in seen:
-            seen.add(tid)
-            extracted_ids.append(tid)
+async def human_delay():
+    """Memberikan jeda acak antar request untuk mensimulasikan perilaku manusia asli."""
+    delay = random.uniform(config.DELAY_MIN, config.DELAY_MAX)
+    await asyncio.sleep(delay)
 
-    return extracted_ids
+async def handle_rate_limit(wait_seconds: int = 60, checkpoint_data: Optional[List[dict]] = None, prefix: str = "checkpoint"):
+    """Menangani pembatasan kuota (HTTP 429) dengan countdown waktu tunggu dan auto-checkpoint."""
+    if checkpoint_data:
+        saved = save_checkpoint(checkpoint_data, prefix=prefix)
+        if saved:
+            print(f"\n[Checkpoint] {len(checkpoint_data)} data diamankan di: {saved}")
 
-async def get_multiple_tweets_detail_and_replies(
-    client: TwitterClient,
-    tweet_ids_or_urls: List[str],
-    max_replies: int = 50,
-    delay_range: Tuple[float, float] = (config.DELAY_MIN, config.DELAY_MAX)
+    print(f"\n[!] Terkena Rate Limit Instagram (HTTP 429). Istirahat selama {wait_seconds} detik...")
+    for remaining in range(wait_seconds, 0, -1):
+        mins, secs = divmod(remaining, 60)
+        print(f"\r    Cooldown: {mins:02d}:{secs:02d} tersisa ({remaining}s)...", end="", flush=True)
+        await asyncio.sleep(1)
+    print("\n[+] Cooldown selesai, melanjutkan request...\n")
+
+# ==============================================================================
+# 1. SCRAPE USER PROFILE & POSTS (DENGAN OPSIONAL DRILL-DOWN KOMENTAR)
+# ==============================================================================
+
+async def get_user_profile(client: InstagramClient, username: str) -> Tuple[Optional[dict], Optional[dict]]:
+    """
+    Mengambil data profil Instagram & objek pengguna awal dari web_profile_info.
+    Returns: (profile_metadata, raw_user_dict)
+    """
+    clean_user = username.strip().lstrip("@")
+    url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={clean_user}"
+    http = client.get_http_client()
+
+    headers = {
+        'referer': f'https://www.instagram.com/{clean_user}/'
+    }
+
+    try:
+        r = await http.get(url, headers=headers)
+        if r.status_code == 200:
+            data = r.json().get("data", {})
+            user_data = data.get("user")
+            if user_data:
+                profile_meta = parse_user_profile(user_data)
+                return profile_meta, user_data
+        elif r.status_code == 404:
+            print(f"[!] Akun @{clean_user} tidak ditemukan.")
+            return None, None
+        elif r.status_code == 429:
+            await handle_rate_limit(60)
+            return await get_user_profile(client, clean_user)
+        elif "checkpoint_required" in r.text:
+            print("\n[!] Akun terkena checkpoint verifikasi Instagram. Buka browser instagram.com untuk verifikasi.")
+            return None, None
+        else:
+            print(f"[!] Gagal mengambil profil @{clean_user}: HTTP {r.status_code}")
+    except Exception as e:
+        print(f"[!] Error saat request profil: {e}")
+
+    return None, None
+
+async def scrape_profile_posts(
+    client: InstagramClient,
+    username: str,
+    limit: int = 50,
+    fetch_comments: bool = False,
+    max_comments_per_post: int = 20,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Scrapes multiple tweets and their replies sequentially.
-    Combines all main tweets and replies into a single unified dataset.
+    Mengambil daftar postingan dari akun Instagram (Feed & Reels).
+    Dilengkapi fitur drill-down 2-in-1 untuk menarik komentar pada masing-masing post.
     """
-    valid_ids = []
-    seen = set()
-    for item in tweet_ids_or_urls:
-        tid = extract_tweet_id(item)
-        if tid and tid not in seen:
-            seen.add(tid)
-            valid_ids.append(tid)
-
-    if not valid_ids:
-        print("[X] Tidak ada Tweet ID / URL valid yang ditemukan.")
+    clean_user = username.strip().lstrip("@")
+    profile_meta, raw_user = await get_user_profile(client, clean_user)
+    if not raw_user:
         return []
 
-    print(f"\n[+] Memulai batch scraping untuk {len(valid_ids)} tweet (Maks {max_replies} replies/tweet)...", flush=True)
+    user_id = str(raw_user.get("id", ""))
+    is_private = raw_user.get("is_private", False)
 
-    combined_data: List[Dict[str, Any]] = []
-    total_tweets_success = 0
-    total_replies_success = 0
+    if is_private and not raw_user.get("followed_by_viewer", True):
+        print(f"[!] Akun @{clean_user} bersifat Privat dan sesi Anda belum mem-follow akun ini.")
+        return []
 
-    for idx, tid in enumerate(valid_ids, 1):
-        print(f"\n[{idx}/{len(valid_ids)}] Memproses Tweet ID: {tid}...", flush=True)
-        res = await get_tweet_detail_and_replies(
-            client=client,
-            tweet_id_or_url=tid,
-            max_replies=max_replies,
-            delay_range=delay_range
-        )
-        main_tweet = res.get("main_tweet")
-        replies = res.get("replies", [])
-
-        if main_tweet:
-            combined_data.append(main_tweet)
-            total_tweets_success += 1
-            if replies:
-                combined_data.extend(replies)
-                total_replies_success += len(replies)
-        else:
-            print(f"[!] Tweet ID {tid} gagal diambil atau tidak ditemukan.", flush=True)
-
-        # Checkpoint otomatis setiap 10 tweet
-        if idx % 10 == 0:
-            save_checkpoint(combined_data, prefix=f"batch_tweets_{len(valid_ids)}")
-
-        if idx < len(valid_ids):
-            delay = random.uniform(*delay_range)
-            await asyncio.sleep(delay)
-
-    print(f"\n[OK] Batch Scraping Selesai!", flush=True)
-    print(f"    Total Tweet Utama Berhasil: {total_tweets_success}/{len(valid_ids)}", flush=True)
-    print(f"    Total Komentar Berhasil: {total_replies_success}", flush=True)
-    print(f"    Total Baris Data Terkumpul: {len(combined_data)}", flush=True)
-
-    return combined_data
-
-async def get_tweet_detail_and_replies(
-    client: TwitterClient,
-    tweet_id_or_url: str,
-    max_replies: int = 50,
-    delay_range: Tuple[float, float] = (config.DELAY_MIN, config.DELAY_MAX)
-) -> Dict[str, Any]:
-    """
-    Scrapes a specific single Tweet detail and its comments/replies.
-    """
-    tweet_id = extract_tweet_id(tweet_id_or_url)
-    if not tweet_id:
-        print("[X] Format Tweet ID atau URL tidak valid.")
-        return {"main_tweet": None, "replies": []}
-
-    print(f"\n[+] Mengambil detail tweet ID: {tweet_id} (Target replies: maks {max_replies})...")
-    http = client.get_http_client()
-    
-    main_tweet_data = None
-    replies_data: List[Dict[str, Any]] = []
+    collected_data: List[Dict[str, Any]] = []
     seen_ids = set()
-    cursor = None
 
-    while True:
-        variables = {
-            "focalTweetId": tweet_id,
-            "with_rux_injections": False,
-            "includePromotedContent": False,
-            "withCommunity": True,
-            "withQuickPromoteEligibilityTweetFields": True,
-            "withBirdwatchNotes": True,
-            "withVoice": True,
-            "withV2Timeline": True
-        }
-        if cursor:
-            variables["cursor"] = cursor
+    # Halaman 1 dari web_profile_info
+    timeline = raw_user.get("edge_owner_to_timeline_media", {})
+    edges = timeline.get("edges", [])
+    page_info = timeline.get("page_info", {})
+    has_next_page = page_info.get("has_next_page", False)
+    end_cursor = page_info.get("end_cursor", "")
 
-        payload = {
-            "variables": variables,
-            "features": GQL_FEATURES,
-            "queryId": "XMOz5h24KAZ86qKffKTLdQ"
+    total_posts_available = timeline.get("count", 0)
+    print(f"\n[+] Memulai penarikan {min(limit, total_posts_available)} postingan dari @{clean_user}...")
+
+    # Parsing postingan halaman 1
+    for edge in edges:
+        node = edge.get("node", {})
+        post_item = parse_post_item(node, owner_info=profile_meta)
+        if post_item and post_item["post_id"] not in seen_ids:
+            seen_ids.add(post_item["post_id"])
+            collected_data.append(post_item)
+
+            if progress_callback:
+                progress_callback(len(collected_data), limit, f"Post: {post_item['shortcode']}")
+
+            # Drill-down komentar jika diaktifkan
+            if fetch_comments and post_item["comments_count"] > 0:
+                print(f"    -> Menggali hingga {max_comments_per_post} komentar dari post {post_item['shortcode']}...")
+                comments = await scrape_post_comments(
+                    client,
+                    post_input=post_item["shortcode"],
+                    limit=max_comments_per_post,
+                    parent_post_id=post_item["post_id"],
+                    show_log=False
+                )
+                collected_data.extend(comments)
+
+            if len(seen_ids) >= limit:
+                break
+
+    # Paginasi halaman selanjutnya jika limit belum tercapai
+    http = client.get_http_client()
+    query_hash = "69cba40317214236af40e7efa697781d" # Web timeline GraphQL query hash
+
+    while has_next_page and end_cursor and len(seen_ids) < limit:
+        await human_delay()
+
+        # Coba via GraphQL Web Query
+        gql_url = "https://www.instagram.com/graphql/query/"
+        variables = json.dumps({"id": user_id, "first": 12, "after": end_cursor})
+        params = {
+            "query_hash": query_hash,
+            "variables": variables
         }
+        headers = {'referer': f'https://www.instagram.com/{clean_user}/'}
 
         try:
-            r = await http.post(TWEET_DETAIL_URL, json=payload)
-        except Exception as e:
-            print(f"[X] Gagal melakukan request detail tweet: {e}")
-            break
+            r = await http.get(gql_url, params=params, headers=headers)
+            
+            if r.status_code == 200:
+                res_data = r.json().get("data", {})
+                user_node = res_data.get("user", {})
+                tl_media = user_node.get("edge_owner_to_timeline_media", {})
+                new_edges = tl_media.get("edges", [])
+                p_info = tl_media.get("page_info", {})
+                has_next_page = p_info.get("has_next_page", False)
+                end_cursor = p_info.get("end_cursor", "")
 
-        if r.status_code == 429:
-            await handle_rate_limit(dict(r.headers))
-            continue
+                if not new_edges:
+                    break
 
-        if r.status_code != 200:
-            print(f"[X] Gagal mengambil detail tweet (Status {r.status_code}).")
-            break
+                for edge in new_edges:
+                    node = edge.get("node", {})
+                    post_item = parse_post_item(node, owner_info=profile_meta)
+                    if post_item and post_item["post_id"] not in seen_ids:
+                        seen_ids.add(post_item["post_id"])
+                        collected_data.append(post_item)
 
-        data = r.json()
-        instructions = data.get("data", {}).get("threaded_conversation_with_injections_v2", {}).get("instructions", [])
-        
-        entries = []
-        for inst in instructions:
-            if inst.get("type") == "TimelineAddEntries":
-                entries = inst.get("entries", [])
-                break
+                        if progress_callback:
+                            progress_callback(len(collected_data), limit, f"Post: {post_item['shortcode']}")
 
-        if not entries and not instructions:
-            break
+                        if fetch_comments and post_item["comments_count"] > 0:
+                            comments = await scrape_post_comments(
+                                client,
+                                post_input=post_item["shortcode"],
+                                limit=max_comments_per_post,
+                                parent_post_id=post_item["post_id"],
+                                show_log=False
+                            )
+                            collected_data.extend(comments)
 
-        new_cursor = extract_cursor_from_instructions(instructions, cursor_type="Bottom")
-        new_batch_count = 0
-
-        for entry in entries:
-            entry_id = entry.get("entryId", "")
-            if entry_id == f"tweet-{tweet_id}" and not main_tweet_data:
-                tweet_results = entry.get("content", {}).get("itemContent", {}).get("tweet_results", {}).get("result", {})
-                main_tweet_data = extract_tweet_from_result(tweet_results, row_type="main_tweet")
-                
-            elif entry_id.startswith("conversationthread-"):
-                items = entry.get("content", {}).get("items", [])
-                for item in items:
-                    item_content = item.get("item", {}).get("itemContent", {})
-                    tweet_results = item_content.get("tweet_results", {}).get("result", {})
-                    parsed = extract_tweet_from_result(tweet_results, row_type="reply", parent_tweet_id=tweet_id)
-                    if parsed and parsed["tweet_id"] != tweet_id and parsed["tweet_id"] not in seen_ids:
-                        seen_ids.add(parsed["tweet_id"])
-                        replies_data.append(parsed)
-                        new_batch_count += 1
-                        if len(replies_data) >= max_replies:
+                        if len(seen_ids) >= limit:
                             break
 
-            elif (entry_id.startswith("tweet-") or entry_id.startswith("sq-I-t-")) and entry_id != f"tweet-{tweet_id}":
-                tweet_results = entry.get("content", {}).get("itemContent", {}).get("tweet_results", {}).get("result", {})
-                parsed = extract_tweet_from_result(tweet_results, row_type="reply", parent_tweet_id=tweet_id)
-                if parsed and parsed["tweet_id"] != tweet_id and parsed["tweet_id"] not in seen_ids:
-                    seen_ids.add(parsed["tweet_id"])
-                    replies_data.append(parsed)
-                    new_batch_count += 1
-                    if len(replies_data) >= max_replies:
-                        break
+                # Auto-checkpoint setiap kelipatan 25 item
+                if len(seen_ids) % 25 == 0:
+                    save_checkpoint(collected_data, prefix=f"profile_{clean_user}")
 
-            if len(replies_data) >= max_replies:
+            elif r.status_code == 429:
+                await handle_rate_limit(60, checkpoint_data=collected_data, prefix=f"profile_{clean_user}")
+                continue
+            elif "checkpoint_required" in r.text:
+                print("\n[!] Checkpoint verifikasi Instagram terpicu. Menyimpan data sementara...")
+                save_checkpoint(collected_data, prefix=f"profile_{clean_user}")
+                break
+            else:
+                # Fallback ke REST API v1 jika GraphQL gagal
+                rest_url = f"https://www.instagram.com/api/v1/feed/user/{user_id}/"
+                rest_params = {"count": 12, "max_id": end_cursor}
+                r_rest = await http.get(rest_url, params=rest_params, headers=headers)
+                if r_rest.status_code == 200:
+                    rest_data = r_rest.json()
+                    items = rest_data.get("items", [])
+                    has_next_page = rest_data.get("more_available", False)
+                    end_cursor = rest_data.get("next_max_id", "")
+                    
+                    for item in items:
+                        post_item = parse_post_item(item, owner_info=profile_meta)
+                        if post_item and post_item["post_id"] not in seen_ids:
+                            seen_ids.add(post_item["post_id"])
+                            collected_data.append(post_item)
+                            if len(seen_ids) >= limit:
+                                break
+                else:
+                    print(f"[!] Gagal mengambil pagination post: HTTP {r.status_code}")
+                    break
+
+        except Exception as e:
+            print(f"[!] Error saat paginasi post: {e}")
+            break
+
+    return collected_data
+
+# ==============================================================================
+# 2. SCRAPE KOMENTAR DARI POSTINGAN (URL / SHORTCODE)
+# ==============================================================================
+
+async def scrape_post_comments(
+    client: InstagramClient,
+    post_input: str,
+    limit: int = 100,
+    parent_post_id: Optional[str] = None,
+    show_log: bool = True,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Mengambil komentar dan balasan (threaded replies) dari sebuah postingan Instagram.
+    Mendukung input URL postingan (p/reel/tv) maupun shortcode.
+    """
+    shortcode = extract_shortcode(post_input)
+    if not shortcode:
+        print(f"[!] Shortcode atau URL tidak valid: {post_input}")
+        return []
+
+    media_id = parent_post_id or str(shortcode_to_media_id(shortcode))
+    http = client.get_http_client()
+
+    collected_comments: List[Dict[str, Any]] = []
+    seen_comment_ids = set()
+    cursor: Optional[str] = None
+    has_more = True
+
+    if show_log:
+        print(f"\n[+] Mengambil komentar dari post '{shortcode}' (Media ID: {media_id})...")
+
+    headers = {
+        'referer': f'https://www.instagram.com/p/{shortcode}/'
+    }
+
+    while has_more and len(collected_comments) < limit:
+        url = f"https://www.instagram.com/api/v1/comments/{media_id}/parent/?can_support_threading=true&permalink_enabled=false"
+        params = {}
+        if cursor:
+            params["min_id"] = cursor
+
+        try:
+            r = await http.get(url, params=params, headers=headers)
+            
+            if r.status_code == 200:
+                data = r.json()
+                comments_list = data.get("comments", [])
+                has_more = data.get("has_more_comments", False)
+                cursor = data.get("next_min_id")
+
+                if not comments_list:
+                    break
+
+                for comment in comments_list:
+                    c_item = parse_comment_item(
+                        comment=comment,
+                        shortcode=shortcode,
+                        post_id=media_id,
+                        row_type="comment"
+                    )
+                    if c_item and c_item["comment_id"] not in seen_comment_ids:
+                        seen_comment_ids.add(c_item["comment_id"])
+                        collected_comments.append(c_item)
+
+                        if progress_callback:
+                            progress_callback(len(collected_comments), limit, f"Komentar oleh @{c_item['comment_author_username']}")
+
+                        # Ambil child replies jika ada
+                        child_comments = comment.get("child_comments", [])
+                        for child in child_comments:
+                            child_item = parse_comment_item(
+                                comment=child,
+                                shortcode=shortcode,
+                                post_id=media_id,
+                                row_type="reply",
+                                parent_comment_id=c_item["comment_id"]
+                            )
+                            if child_item and child_item["comment_id"] not in seen_comment_ids:
+                                seen_comment_ids.add(child_item["comment_id"])
+                                collected_comments.append(child_item)
+
+                        if len(collected_comments) >= limit:
+                            break
+
+                # Jeda antar halaman komentar
+                if has_more and cursor and len(collected_comments) < limit:
+                    await human_delay()
+
+            elif r.status_code == 429:
+                await handle_rate_limit(60, checkpoint_data=collected_comments, prefix=f"comments_{shortcode}")
+                continue
+            elif "checkpoint_required" in r.text:
+                print("\n[!] Checkpoint verifikasi Instagram terpicu saat membaca komentar.")
+                save_checkpoint(collected_comments, prefix=f"comments_{shortcode}")
+                break
+            else:
+                if show_log:
+                    print(f"[!] Gagal mengambil komentar: HTTP {r.status_code}")
                 break
 
-        if len(replies_data) >= max_replies or not new_cursor or new_cursor == cursor or max_replies == 0:
+        except Exception as e:
+            if show_log:
+                print(f"[!] Error saat mengambil komentar: {e}")
             break
-            
-        cursor = new_cursor
-        await asyncio.sleep(random.uniform(*delay_range))
 
-    # Pastikan data terpotong persis sesuai kuota max_replies
-    replies_data = replies_data[:max_replies]
+    return collected_comments
 
-    if main_tweet_data:
-        print(f"[OK] Tweet utama ditemukan dari @{main_tweet_data['username']}")
-    print(f"[OK] Ditemukan {len(replies_data)} replies (dibatasi maks {max_replies}).")
+async def scrape_multiple_posts_comments(
+    client: InstagramClient,
+    post_inputs: List[str],
+    limit_per_post: int = 50
+) -> List[Dict[str, Any]]:
+    """
+    Mengambil komentar dari beberapa link postingan Instagram secara berurutan.
+    """
+    all_comments: List[Dict[str, Any]] = []
+    print(f"\n[+] Memproses {len(post_inputs)} postingan untuk penarikan komentar...")
 
-    return {
-        "main_tweet": main_tweet_data,
-        "replies": replies_data
+    for i, post_input in enumerate(post_inputs, 1):
+        print(f"\n[{i}/{len(post_inputs)}] Memproses post: {post_input}")
+        comments = await scrape_post_comments(
+            client=client,
+            post_input=post_input,
+            limit=limit_per_post,
+            show_log=True
+        )
+        all_comments.extend(comments)
+        print(f"[✓] Didapat {len(comments)} komentar dari post ini (Total: {len(all_comments)})")
+
+        if i < len(post_inputs):
+            await human_delay()
+
+    return all_comments
+
+# ==============================================================================
+# 3. SCRAPE POSTINGAN BERDASARKAN HASHTAG (#HASHTAG)
+# ==============================================================================
+
+async def scrape_hashtag_posts(
+    client: InstagramClient,
+    hashtag: str,
+    limit: int = 50,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Mengambil postingan publik berdasarkan #hashtag tertentu.
+    """
+    clean_tag = hashtag.strip().lstrip("#")
+    http = client.get_http_client()
+
+    url = f"https://www.instagram.com/api/v1/tags/web_info/?tag_name={clean_tag}"
+    headers = {
+        'referer': f'https://www.instagram.com/explore/tags/{clean_tag}/'
     }
+
+    collected_data: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    print(f"\n[+] Mencari postingan untuk tag #{clean_tag}...")
+
+    try:
+        r = await http.get(url, headers=headers)
+        if r.status_code == 200:
+            data = r.json().get("data", {})
+            total_count = data.get("count", 0)
+            print(f"[+] Total postingan terindeks #{clean_tag}: {total_count:,}")
+
+            # Top & Recent sections
+            sections = []
+            if "top" in data and "sections" in data["top"]:
+                sections.extend(data["top"]["sections"])
+            if "recent" in data and "sections" in data["recent"]:
+                sections.extend(data["recent"]["sections"])
+
+            for sec in sections:
+                layout_content = sec.get("layout_content", {})
+                medias = layout_content.get("medias", []) or layout_content.get("fill_items", [])
+                for media_wrap in medias:
+                    item = media_wrap.get("media", {})
+                    post_item = parse_post_item(item)
+                    if post_item and post_item["post_id"] not in seen_ids:
+                        seen_ids.add(post_item["post_id"])
+                        collected_data.append(post_item)
+
+                        if progress_callback:
+                            progress_callback(len(collected_data), limit, f"Post: {post_item['shortcode']}")
+
+                        if len(collected_data) >= limit:
+                            break
+                if len(collected_data) >= limit:
+                    break
+
+        elif r.status_code == 429:
+            await handle_rate_limit(60)
+            return await scrape_hashtag_posts(client, clean_tag, limit, progress_callback)
+        elif "checkpoint_required" in r.text:
+            print("\n[!] Checkpoint verifikasi Instagram terpicu saat pencarian hashtag.")
+        else:
+            print(f"[!] Gagal mengambil data hashtag #{clean_tag}: HTTP {r.status_code}")
+
+    except Exception as e:
+        print(f"[!] Error saat scraping hashtag: {e}")
+
+    return collected_data

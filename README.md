@@ -1,271 +1,269 @@
-# Twitter / X Scraper (WX-Scraper)
+# Instagram Scraper (WIG-Scraper)
 
 > **Developer:** [@W1ld](https://github.com/W1ld)  
-> **Repository:** [https://github.com/W1ld/WX-Scraper](https://github.com/W1ld/WX-Scraper)
+> **Repository:** [https://github.com/W1ld/WIG-Scraper](https://github.com/W1ld/WIG-Scraper)
 
-Aplikasi scraper Twitter (X) berbasis Python dengan antarmuka CLI interaktif, fitur penanganan Rate Limit otomatis, auto-checkpointing, dan mode headless/command-line arguments.
+Aplikasi scraper Instagram modern berbasis Python dengan antarmuka CLI interaktif, penanganan pembatasan kuota (*Rate Limit*) otomatis, sistem *auto-checkpointing*, dan dukungan eksekusi otomatis (*headless / CLI arguments*).
 
 ---
 
 ## ✨ Keunggulan & Fitur Utama
 
-- 💰 **100% Gratis & Tanpa Biaya API:** Tidak memerlukan langganan berbayar X Developer API ($100 – $5.000/bulan) yang kuotanya sangat dibatasi.
-- 🚀 **Akses Cepat & Ringan (Async GraphQL Engine):** Mengakses endpoint GraphQL internal Twitter/X langsung via HTTP/2 dengan `asyncio` & `httpx`. Jauh lebih cepat, stabil, dan hemat memori tanpa beban browser Selenium/Puppeteer.
-- 💬 **Pencarian 2-in-1 (Tweet Utama + Komentar / Balasan Publik):** Mampu mencari tweet topik sekaligus otomatis menggali (*drill-down*) seluruh komentar/balasan (*replies/threads*) pada masing-masing tweet secara terstruktur dengan relasi `parent_tweet_id`.
-- ⏱️ **Jeda Acak Humanis & Fleksibel (*Configurable Random Delay*):** Dilengkapi jeda waktu acak yang dapat dikonfigurasi (`DELAY_MIN` & `DELAY_MAX` di `.env`, default 3–6 detik) untuk mensimulasikan perilaku penjelajahan manusia asli (*human-like behavior*), meminimalkan risiko deteksi bot, dan menjaga akun tetap aman.
-- 🔎 **Dukungan Penuh Advanced Search Operators:** Mendukung seluruh sintaks pencarian resmi X (filter `lang:id`, rentang tanggal `since: / until:`, metrik keterlibatan `min_faves: / min_retweets:`, filter akun `from: / to:`, hingga kata kunci eksklusif).
-- 🔄 **Pagination Kursor Cerdas (*Cursor-Based Pagination*):** Menangani navigasi halaman dinamis GraphQL (`TimelineAddEntries` & `TimelineReplaceEntry`) sehingga mampu menarik data dalam skala besar (>1.000 data) secara kontinu tanpa duplikasi.
-- 🛡️ **Manajemen Rate Limit Otomatis (*Auto-Cooldown*):** Membaca header `x-rate-limit-reset` secara dinamis saat terkena batas kuota (HTTP 429), menampilkan hitung mundur jeda waktu, dan otomatis melanjutkan scraping begitu batas waktu pulih.
-- 💾 **Sistem Auto-Checkpoint:** Data sementara otomatis diamankan dan dicadangkan secara berkala ke disk lokal sehingga hasil penarikan tidak hilang jika terjadi gangguan koneksi atau listrik.
-- 🔒 **Aman & Bebas CAPTCHA (Cookie Session Auth):** Menggunakan token sesi browser resmi (`auth_token` & `ct0`) tanpa perlu memasukkan password, 100% aman dari verifikasi bot/CAPTCHA dan risiko akun terkunci.
-- 📊 **Dataset Lengkap & Siap Analisis (26+ Atribut Metadata):** Menyediakan metadata komprehensif mulai dari teks utuh (*untruncated*), metrik interaksi (likes, retweets, replies, quotes, bookmarks, views/tayangan), detail profil pengguna (bio, verified status, follower/following count, lokasi), hingga media URLs dan hashtags.
-- 📁 **Ekspor Fleksibel (Excel/CSV & JSON):** Mendukung format CSV `utf-8-sig` (langsung terbaca rapi di Microsoft Excel dengan dukungan emoji) dan format JSON hierarkis.
-- 🌐 **Dukungan Proxy Dinamis:** Mendukung koneksi proxy (HTTP/HTTPS/SOCKS5) untuk rotasi IP dan kebutuhan scraping volume tinggi.
-- 💻 **Dual Mode Penggunaan:** Mendukung **Menu Interaktif (Terminal UI Rich)** untuk kemudahan penggunaan langsung, serta **Mode Command-Line (CLI Arguments)** untuk kebutuhan otomatisasi skrip / *data pipeline*.
+- 💰 **100% Gratis & Tanpa API Berbayar:** Tidak memerlukan persetujuan Meta Developer App ataupun langganan Graph API yang rumit dan dibatasi izin bisnisnya.
+- 🚀 **Akses Cepat & Ringan (Async Engine):** Mengakses endpoint web internal Instagram langsung via HTTP/2 dengan `asyncio` & `httpx`. Jauh lebih ringan (<50MB RAM) dan stabil tanpa membebani laptop dengan browser Selenium/Puppeteer.
+- 🎯 **Scrape Profil (@username):** Mengambil daftar postingan feed & reels dari akun publik/privat (yang telah difollow) lengkap dengan metrik interaksi (likes, comments, views, caption, timestamp).
+- 💬 **Pencarian 2-in-1 (Postingan + Komentar Sekaligus):** Mampu menarik postingan profil sekaligus otomatis menggali (*drill-down*) seluruh komentar & balasan komentar (*threaded replies*) pada masing-masing post secara relasional.
+- 🔗 **Scrape Komentar Spesifik (URL / Shortcode):** Mengambil seluruh komentar dan balasan dari tautan postingan Instagram manapun (`/p/`, `/reel/`, atau `/tv/`).
+- 🏷️ **Scrape Berdasarkan Hashtag (#hashtag):** Mengambil postingan publik terindeks pada hashtag tertentu.
+- ⏱️ **Jeda Acak Humanis (*Configurable Random Delay*):** Dilengkapi jeda waktu acak yang dapat dikonfigurasi (`DELAY_MIN` & `DELAY_MAX` di `.env`, default 3–6 detik) untuk mensimulasikan perilaku penjelajahan manusia asli (*human-like browsing*), meminimalkan risiko tantangan keamanan Meta.
+- 🛡️ **Manajemen Rate Limit & Auto-Checkpoint:** Jika terkena batas kuota (HTTP 429), program akan melakukan hitung mundur (*cooldown*) secara dinamis dan data yang sudah ditarik otomatis diamankan ke disk (`data/checkpoint_...csv`).
+- 🔒 **Aman (Session Cookies Auth):** Menggunakan token sesi browser resmi (`sessionid` & `csrftoken`) tanpa perlu memasukkan password akun ke dalam skrip.
+- 📊 **Dataset Lengkap & Siap Analisis:** Menyediakan metadata komprehensif mulai dari caption utuh, timestamp ISO & Unix, URLs media (foto, thumbnail video, video reels, slide carousel), daftar hashtag, mention user, hingga detail komentator.
+- 📁 **Ekspor Fleksibel (Excel/CSV & JSON):** Mendukung format CSV `utf-8-sig` (langsung terbuka rapi di Microsoft Excel Windows dengan dukungan emoji lengkap) serta format JSON hierarkis.
+- 💻 **Dual Mode Penggunaan:** Mendukung **Menu Interaktif (Terminal UI Rich)** untuk pemakaian harian yang ramah pemula, serta **Mode Command-Line (CLI Flags)** untuk otomasi skrip / data pipeline.
 
 ---
 
-## 📊 Tabel Perbandingan Metode Scraping
+## 📊 Tabel Perbandingan Metode Scraping Instagram
 
-| Fitur / Parameter | **Octoparse** | **Selenium / Playwright** | **Twitter-Harvest (Colab)** | **WX-Scraper (Tool Ini)** |
+| Fitur / Parameter | **Octoparse** | **Selenium / Playwright** | **Instaloader / Instagrapi** | **WIG-Scraper (Tool Ini)** |
 | :--- | :---: | :---: | :---: | :---: |
 | **Biaya & Batasan** | ❌ Berbayar ($89–$249/bln) | ✅ Gratis | ✅ Gratis | ✅ **100% Gratis & Open-Source** |
-| **Kecepatan & Penggunaan RAM** | ❌ Lambat & Boros RAM (500MB+) | ❌ Lambat & Boros RAM (500MB+) | ⚠️ Sedang | ⚡ **Sangat Cepat & Ringan (<50MB)** |
-| **Scrape Tweet Utama + Replies** | ❌ Sangat Rumit (Sering Gagal) | ⚠️ Perlu konfigurasi DOM rumit | ❌ Hanya Tweet Utama | 🎯 **2-in-1 Otomatis (Relasional)** |
-| **Kendala Infinite Scroll Twitter**| ⚠️ Rentan Terlewat / Unmounted | ⚠️ Rentan Crash / Freeze | ⚠️ Terbatas | 🔄 **Anti-Skip (Kursor GraphQL)** |
-| **Simulasi Jeda Acak (Random Delay)**| ⚠️ Manual Workflow | ⚠️ Manual Scripting | ⚠️ Terbatas | ⏱️ **Bawaan & Dapat Diatur (.env)** |
-| **Risiko Timeout & Hilang Data** | ⚠️ Rentan Task Error | ❌ Rentan crash | ❌ Sering timeout di Colab | 🛡️ **Auto-Checkpoint & Resume** |
-| **Bebas Masalah Driver Browser** | ⚠️ Terikat Browser Internal | ❌ Sering error ChromeDriver | ✅ Ya | ✅ **Bebas Driver (Pure Async)** |
-| **Dukungan Filter Query Lengkap** | ⚠️ Terbatas pada UI Web | ⚠️ Terbatas pada UI Web | ⚠️ Terbatas | 🔍 **Penuh (Semua Operator X)** |
+| **Kecepatan & Penggunaan RAM** | ❌ Lambat & Boros RAM (500MB+) | ❌ Berat & Boros RAM (400MB+) | ⚠️ Sedang | ⚡ **Sangat Cepat & Ringan (<50MB)** |
+| **Scrape Postingan + Komentar** | ❌ Sangat Rumit | ⚠️ Perlu konfigurasi DOM rumit | ⚠️ Perlu loop manual | 🎯 **2-in-1 Otomatis (Relasional)** |
+| **Bebas Masalah Driver Browser** | ⚠️ Terikat Browser Internal | ❌ Sering error ChromeDriver | ✅ Ya | ✅ **Bebas Driver (Pure Async HTTP)** |
+| **Simulasi Jeda Humanis** | ⚠️ Manual | ⚠️ Manual Scripting | ⚠️ Terbatas | ⏱️ **Bawaan & Dapat Diatur (.env)** |
+| **Risiko Kehilangan Data** | ⚠️ Rentan Task Error | ❌ Rentan crash di tengah jalan | ❌ Tanpa auto-save | 🛡️ **Auto-Checkpoint ke Disk** |
+| **Kesiapan Ekspor Excel Windows** | ⚠️ Sering rusak encoding emoji | ⚠️ Perlu scripting export | ⚠️ Format teks dasar | 📊 **Bawaan `utf-8-sig` Siap Excel** |
 
 ---
 
 ## ⚠️ Hal-Hal Penting yang Perlu Diperhatikan
 
-1. **Autentikasi Sesi Browser (`auth_token` & `ct0`)**:
-   - Twitter mewajibkan autentikasi akun untuk membaca tweet, search, dan komentar.
-   - Program ini menggunakan **Session Cookies (`auth_token` & `ct0`)** dari browser Anda sehingga **tidak memerlukan username / password** sama sekali.
-   - **100% Bebas CAPTCHA & Akun Terkunci**: Menghindari pemblokiran bot saat proses login.
-   - Sesi otomatis disimpan ke `cookies.json` untuk penggunaan seterusnya.
+### 1. Cara Mengambil `sessionid` dari Browser (Hanya Butuh 15 Detik)
+Instagram mewajibkan sesi login aktif untuk membaca detail profil dan komentar. Program ini memanfaatkan **Session Cookie** dari browser Anda:
 
-2. **Cara Mendapatkan `auth_token` & `ct0` dari Browser (15 Detik)**:
-   - Buka `https://x.com` di browser (Chrome / Edge / Firefox) yang sudah login ke akun Twitter.
-   - Tekan **F12** (Developer Tools) ➔ Masuk ke tab **Application** (atau **Storage** di Firefox).
-   - Di panel sebelah kiri, klik **Cookies** ➔ `https://x.com`.
-   - Salin nilai (*Value*) dari **`auth_token`** dan **`ct0`** ke file `.env`.
+1. Buka [https://www.instagram.com](https://www.instagram.com) di browser (Chrome / Edge / Firefox) dan pastikan Anda sudah login.
+2. Tekan tombol **F12** (Developer Tools) pada keyboard Anda.
+3. Masuk ke tab **Application** (atau tab **Storage** pada Firefox).
+4. Pada panel sebelah kiri, pilih **Cookies** ➔ klik `https://www.instagram.com`.
+5. Cari dan salin nilai (*Value*) dari:
+   - **`sessionid`** (Wajib)
+   - **`csrftoken`** (Disarankan)
+   - **`ds_user_id`** (Opsional)
+6. Tempelkan ke dalam file `.env` atau masukkan saat diminta oleh program di terminal.
 
-3. **Rate Limit (HTTP 429) & Keamanan Akun**:
-   - Program dilengkapi **Random Delay** (default 3 - 6 detik) antar request untuk menyerupai perilaku manusia.
-   - Dilengkapi **Dynamic Rate Limit Handler**: Program membaca timestamp *real-time* dari server Twitter (`x-rate-limit-reset`) dan melakukan hitung mundur otomatis (*countdown*). Begitu masa cooldown selesai, program **secara otomatis melanjutkan scraping** tanpa crash.
-   - **Auto-Checkpoint Backup**: Data yang sudah didapat otomatis disimpan secara berkala ke folder `data/checkpoint_...csv` sehingga aman dari gangguan koneksi/listrik.
+> [!TIP]
+> **Rekomendasi Keamanan:** Disarankan menggunakan akun sekunder / akun cadangan (*dummy account*) saat melakukan scraping data dalam volume besar untuk menjaga keamanan akun utama Anda dari tantangan verifikasi Meta (*checkpoint*).
 
-4. **Format Output Data**:
-   - **CSV**: Encoding `utf-8-sig` (langsung terbaca rapi di Microsoft Excel, mendukung karakter bahasa Indonesia dan emoji).
-   - **JSON**: Terstruktur rapi dengan seluruh metadata tweet dan profil user.
-   - Kolom `row_type` membedakan `main_tweet` dan `reply`. Komentar ditautkan dengan `parent_tweet_id`.
-   - File output otomatis disimpan di folder `data/`.
+### 2. Format Output Data
+* **CSV (`utf-8-sig`)**: Dapat langsung dibuka dengan rapi di Microsoft Excel, Google Sheets, atau diimpor ke Pandas/R. Mendukung karakter khusus bahasa Indonesia dan emoji tanpa berantakan (*mojibake*).
+* **JSON**: Struktur data hierarkis lengkap dengan metadata media dan interaksi.
+* File hasil scraping otomatis tersimpan di folder `data/`.
 
 ---
 
 ## 📁 Struktur Proyek
 
 ```
-WX-Scraper/
-├── .env.example          # Template konfigurasi kredensial
-├── requirements.txt      # Daftar pustaka dependensi
+WIG-Scraper/
+├── .env.example          # Template konfigurasi kredensial Instagram
+├── .env                  # Konfigurasi aktif (sessionid, csrftoken, delay)
+├── requirements.txt      # Daftar pustaka dependensi (httpx, pandas, rich, dll.)
 ├── config.py             # Pengaturan konfigurasi & environment variable
-├── client_manager.py     # Autentikasi & manajemen cookies sesi
-├── parser.py             # Parser metadata Tweet, Replies, & User
-├── scraper.py            # Mesin scraping (Search, Search + Replies per tweet, Tweet Detail)
+├── client_manager.py     # Autentikasi sesi & manajemen cookies Instagram
+├── parser.py             # Parser metadata Postingan, Komentar, & Profil
+├── scraper.py            # Mesin scraping (Profile, Drill-down, Comments, Hashtag)
 ├── exporter.py           # Ekspor data ke CSV & JSON serta auto-checkpoint
-├── main.py               # Entrypoint (Menu interaktif & CLI arguments)
-└── data/                 # Folder hasil penyimpanan data scraping & checkpoint
+├── main.py               # Entrypoint (Menu interaktif Rich & CLI arguments)
+└── data/                 # Folder penyimpanan hasil data scraping & checkpoint
 ```
 
 ---
 
 ## 🚀 Panduan Setup & Cara Menjalankan (Step-by-Step)
 
-### Prasyarat: Instalasi Python (Jika Belum Terpasang)
-Program ini membutuhkan **Python 3.10 atau versi yang lebih baru**. Jika Anda belum menginstall Python di komputer Anda:
-
-- **Windows:**
-  - Unduh installer resmi dari situs [python.org/downloads](https://www.python.org/downloads/).
-  - ⚠️ **PENTING:** Saat menjalankan installer di Windows, pastikan mencentang opsi **"Add python.exe to PATH"** di bagian bawah sebelum menekan tombol *Install Now*.
-  - Atau install versi terbaru langsung melalui terminal Windows:
-    ```cmd
-    winget install Python.Python.3
-    ```
-- **Linux (Ubuntu / Debian):**
-  ```bash
-  sudo apt update && sudo apt install python3 python3-pip python3-venv -y
-  ```
-- **macOS (via Homebrew):**
-  ```bash
-  brew install python
-  ```
-
-*Cek apakah Python sudah terpasang dengan menjalankan: `python --version` atau `python3 --version`.*
+### Langkah 1: Prasyarat Python
+Pastikan komputer Anda sudah terpasang **Python 3.10 atau versi yang lebih baru**.
+Jika belum terpasang di Windows, pasang melalui terminal:
+```cmd
+winget install Python.Python.3
+```
+*(Atau unduh installer resmi dari [python.org/downloads](https://www.python.org/downloads/) dan pastikan mencentang **"Add python.exe to PATH"**).*
 
 ---
 
-### Langkah 1: Clone Repositori & Masuk ke Direktori Proyek
-Buka terminal (PowerShell / Command Prompt / Bash), clone repositori ini, lalu masuk ke folder proyek:
-```bash
-git clone https://github.com/W1ld/WX-Scraper.git
-cd WX-Scraper
-```
+### Langkah 2: Buat & Aktifkan Virtual Environment (Disarankan)
+Sangat disarankan menggunakan Virtual Environment (`.venv`) agar seluruh dependensi terisolasi rapi dan tidak bentrok dengan library Python lain di sistem Anda.
 
-### Langkah 2: (Opsional tapi Disarankan) Buat & Aktifkan Virtual Environment
-Membuat virtual environment memastikan pustaka Python terisolasi dengan rapi:
+1. **Buat Virtual Environment:**
+   Buka terminal di folder proyek ini (`WIG-Scraper`), lalu jalankan:
+   ```bash
+   python -m venv .venv
+   ```
 
-- **Windows (PowerShell):**
-  ```powershell
-  python -m venv venv
-  .\venv\Scripts\Activate.ps1
-  ```
-- **Windows (CMD):**
-  ```cmd
-  python -m venv venv
-  venv\Scripts\activate.bat
-  ```
-- **Linux / macOS:**
-  ```bash
-  python3 -m venv venv
-  source venv/bin/activate
-  ```
+2. **Aktifkan Virtual Environment:**
+   * **Windows (PowerShell):**
+     ```powershell
+     .\.venv\Scripts\Activate.ps1
+     ```
+     > [!TIP]
+     > Jika muncul pesan error *Execution Policy* di PowerShell, jalankan perintah ini sekali saja:
+     > ```powershell
+     > Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+     > ```
+   * **Windows (Command Prompt / CMD):**
+     ```cmd
+     .\.venv\Scripts\activate.bat
+     ```
+   * **Linux / macOS:**
+     ```bash
+     source .venv/bin/activate
+     ```
 
-### Langkah 3: Install Semua Dependensi
-Pastikan Python 3.10+ telah terpasang, lalu instal paket yang dibutuhkan:
+   *Tanda berhasil:* Akan muncul teks indikator `(.venv)` di sebelah kiri prompt terminal Anda.
+
+---
+
+### Langkah 3: Install Dependensi Library
+Setelah virtual environment aktif `(.venv)`, pasang seluruh pustaka yang dibutuhkan:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### Langkah 4: Konfigurasi File Lingkungan (`.env`)
-Salin file template `.env.example` menjadi file `.env`:
+---
 
-- **Windows PowerShell / Linux / Mac:**
-  ```bash
-  cp .env.example .env
-  ```
-- **Windows CMD:**
-  ```cmd
-  copy .env.example .env
-  ```
+### Langkah 4: Konfigurasi Kredensial `.env`
+Buka file `.env` di teks editor, lalu masukkan nilai cookie yang sudah disalin dari browser:
 
-Buka file **`.env`** dengan text editor (VS Code, Notepad, dll) dan isi cookie `auth_token` dan `ct0` Anda:
-```ini
-AUTH_TOKEN=isi_auth_token_dari_browser_anda
-CT0=isi_ct0_dari_browser_anda
+```env
+IG_SESSION_ID=nilai_sessionid_dari_browser
+IG_CSRF_TOKEN=nilai_csrftoken_dari_browser
+IG_DS_USER_ID=nilai_ds_user_id_dari_browser
 
-# Pengaturan Delay antar request (detik)
+# Jeda acak antar request (detik)
 DELAY_MIN=3.0
 DELAY_MAX=6.0
-
-# Bahasa antarmuka (id-ID atau en-US)
-DEFAULT_LANG=id-ID
 ```
-
-### Langkah 5: Jalankan Program
-Jalankan program menggunakan menu interaktif:
-```bash
-python main.py
-```
-*(Program akan memvalidasi sesi cookie Anda dan langsung siap digunakan).*
 
 ---
 
-## 🖥️ Cara Menjalankan
+### Langkah 5: Menjalankan Program
 
-### Mode 1: Menu Interaktif (Terminal UI)
-Jalankan perintah:
+#### Mode 1: Menu Interaktif Terminal (Sangat Mudah Digunakan)
+Jalankan program tanpa argumen tambahan:
 ```bash
 python main.py
 ```
 
-Pilihan menu yang tersedia:
+Anda akan disajikan menu interaktif yang elegan:
 ```
 ==================================================
-  WX-Scraper (Twitter / X Data Extraction Suite) 
+WIG-Scraper (Instagram Data Extraction Suite)
 ==================================================
-Pilih Fitur Scraping:
-  1. Cari Tweet berdasarkan Kata Kunci / Hashtag (Hanya Tweet Utama)
-  2. Ambil Detail Tweet & Balasan / Komentar (Bisa 1 atau Banyak Tweet / URL Sekaligus)
-  3. Cari Tweet + Ambil Komentar/Replies untuk Setiap Tweet (Kombinasi Fitur 1 & 2)
-  4. Perbarui Sesi Login (Masukkan auth_token & ct0 baru)
-  5. Keluar (Exit)
-```
-
-> **Contoh Penggunaan Menu 2 (Bisa 1 atau Banyak URL/Tweet ID)**:
-> - Masukkan URL Tweet atau Tweet ID: `https://x.com/user1/status/11111 https://x.com/user2/status/22222 33333` *(bisa dipisah spasi atau koma)*
-> - Program akan mendeteksi seluruh tweet target, mengambil tweet utama beserta seluruh replies-nya secara berurutan, dan menggabungkannya ke 1 file CSV/JSON yang rapi.
-
-> **Contoh Penggunaan Menu 1 & 3 (Dengan Filter Tanggal Opsional)**:
-> - Masukkan kata kunci: `Monas`
-> - Urutan: `top` / `latest` / `media`
-> - Tanggal Mulai / Since (Opsional): `2024-01-01` (atau tekan `Enter` jika tanpa filter)
-> - Tanggal Akhir / Until (Opsional): `2024-01-31` (atau tekan `Enter` jika tanpa filter)
-> - Jumlah tweet: `100`
-> - Format ekspor: `csv` / `json` / `both`
-> - Hasilnya akan diekspor rapi ke CSV & JSON di folder `data/` dengan penamaan file yang menyertakan rentang tanggal.
-
----
-
-### Mode 2: Command Line (Headless / Otomatisasi Skrip)
-
-#### A. Cari Tweet + Ambil Komentar per Tweet (Kombinasi) dengan Filter Tanggal
-```bash
-# Mengambil 100 tweet 'langit' rentang tanggal 1 Jan 2024 - 31 Jan 2024 beserta maks 5 komentar per tweet
-python main.py --mode combo --query "langit" --since 2024-01-01 --until 2024-01-31 --sort top --count 100 --replies-per-tweet 5 --format csv
-```
-
-#### B. Cari Tweet Saja (Hanya Tweet Utama)
-```bash
-# Pencarian tweet dengan filter tanggal mulai saja
-python main.py --mode search --query "AI Indonesia" --since 2024-06-01 --sort latest --count 50 --format csv
-
-# Pencarian tweet tanpa filter tanggal (default)
-python main.py --mode search --query "AI Indonesia" --sort latest --count 50 --format csv
-```
-
-#### C. Detail Tweet Tunggal atau Banyak Tweet Sekaligus (Batch)
-```bash
-# 1 Tweet tunggal
-python main.py --mode tweet --id "https://x.com/username/status/1234567890123456789" --replies 50 --format csv
-
-# Banyak Tweet sekaligus (dipisahkan spasi atau koma)
-python main.py --mode tweet --id "https://x.com/a/status/111 https://x.com/b/status/222 333444555" --replies 50 --format csv
-```
-
-#### D. Perbarui Sesi Cookies
-```bash
-python main.py --mode login
+1. Scrape Postingan dari Profil / Akun (@username)
+2. Scrape Postingan Profil + Komentar (2-in-1 Drill-Down)
+3. Scrape Seluruh Komentar dari Link / URL Postingan
+4. Scrape Komentar dari Beberapa URL Sekaligus (Batch)
+5. Scrape Postingan Berdasarkan Hashtag (#hashtag)
+6. Uji / Perbarui Cookies Sesi Instagram
+0. Keluar dari Aplikasi
 ```
 
 ---
 
-## 📊 Data Metadata yang Diambil
+#### Mode 2: Mode Baris Perintah (CLI Arguments untuk Otomasi)
+Bagi Anda yang ingin mengintegrasikan scraper ini ke dalam skrip otomatis atau cron job:
 
-File CSV dan JSON yang diekspor memuat kolom data berikut:
-- **Tipe & Relasi Data**:
-  - `row_type`: `main_tweet` (tweet utama) atau `reply` (komentar).
-  - `parent_tweet_id`: ID tweet utama tempat komentar berada.
-- **Informasi Tweet**:
-  - `tweet_id`: ID unik status tweet.
-  - `url`: Link lengkap ke tweet (`https://x.com/.../status/...`).
-  - `created_at`: Waktu tweet diposting.
-  - `text`: Isi teks tweet secara utuh (*untruncated*).
-  - `lang`: Kode bahasa tweet.
-  - `likes`, `retweets`, `replies`, `quotes`, `bookmarks`, `views`: Metrik interaksi tweet.
-  - `is_reply`, `in_reply_to_tweet_id`: Status balasan/thread.
-  - `is_quote`, `quoted_tweet_id`: Status quote tweet.
-  - `hashtags`, `urls`, `media_types`, `media_urls`: Tautan dan lampiran media (foto/video/gif).
-- **Informasi Penulis (User)**:
-  - `user_id`: ID unik pengguna Twitter.
-  - `username`: Handle/Screen name (contoh: `@elonmusk`).
-  - `name`: Nama tampilan (*Display Name*).
-  - `user_bio`: Bio profil user.
-  - `user_followers_count`, `user_following_count`: Jumlah follower dan following.
-  - `user_verified`: Status verifikasi akun (centang biru/verified).
-  - `user_location`: Lokasi pengguna.
-  - `user_avatar`: URL gambar profil pengguna.
+1. **Scrape Postingan Profil Akun:**
+   ```bash
+   python main.py --profile natgeo --limit 50 --format both
+   ```
+
+2. **Scrape Postingan Profil + Seluruh Komentar (2-in-1 Drill-down):**
+   ```bash
+   python main.py --profile kemnaker --limit 20 --drill-down --max-comments 30
+   ```
+
+3. **Scrape Komentar dari Tautan Postingan Spesifik:**
+   ```bash
+   python main.py --comments https://www.instagram.com/p/DBabc123/ --limit 100
+   ```
+   *(Atau cukup masukkan shortcode: `python main.py --comments DBabc123 --limit 100`)*
+
+4. **Scrape Komentar Beberapa Post Sekaligus (Batch URLs):**
+   ```bash
+   python main.py --batch-urls "DBabc123,DBxyz789" --limit 50
+   ```
+   *(Atau gunakan file teks yang berisi daftar URL: `python main.py --batch-urls links.txt --limit 50`)*
+
+5. **Scrape Postingan Berdasarkan Hashtag:**
+   ```bash
+   python main.py --hashtag teknologi --limit 40
+   ```
+
+6. **Paksa Input Ulang Cookies:**
+   ```bash
+   python main.py --force-login
+   ```
+
+---
+
+## 📊 Daftar Atribut Metadata Output (CSV / JSON)
+
+Dataset yang dihasilkan mencakup lebih dari 20 atribut lengkap untuk kebutuhan analitik, sentimen, dan riset:
+
+| Nama Kolom | Tipe | Deskripsi |
+| :--- | :--- | :--- |
+| `row_type` | String | Jenis baris data (`post`, `comment`, atau `reply`). |
+| `post_id` | String | ID numerik unik postingan Instagram. |
+| `shortcode` | String | Kode unik URL postingan (misal `DBabc123`). |
+| `post_url` | String | URL lengkap menuju postingan (`https://www.instagram.com/p/...`). |
+| `post_type` | String | Format postingan (`image`, `video`, `carousel`, atau `reel`). |
+| `caption` | String | Teks caption lengkap dari postingan. |
+| `created_at` | String | Tanggal dan jam pembuatan format ISO UTC (`YYYY-MM-DD HH:MM:SS UTC`). |
+| `timestamp` | Integer | Waktu pembuatan dalam format Unix Epoch timestamp. |
+| `likes_count` | Integer | Jumlah penyuka (*likes*) pada postingan atau komentar. |
+| `comments_count`| Integer | Jumlah komentar pada post, atau jumlah balasan (*child replies*) pada komentar. |
+| `views_count` | Integer | Jumlah tayangan video/reels (jika format video). |
+| `is_video` | Boolean | Menandakan apakah postingan berupa video atau bukan. |
+| `display_url` | String | Tautan URL resolusi tinggi gambar utama atau thumbnail video. |
+| `video_url` | String | Tautan langsung file video (jika postingan berupa video/reels). |
+| `carousel_media_urls`| String | Daftar URL seluruh slide gambar/video jika berupa album *carousel*. |
+| `hashtags` | String | Daftar hashtag yang diekstrak dari caption postingan. |
+| `tagged_users` | String | Daftar username yang di-mention atau di-tag dalam caption. |
+| `location` | String | Nama lokasi geotagging yang disematkan pada postingan. |
+| `owner_username`| String | Username pembuat postingan. |
+| `owner_full_name`| String | Nama lengkap pemilik akun pembuat postingan. |
+| `owner_id` | String | ID unik pengguna Instagram pembuat postingan. |
+| `parent_post_id`| String | ID postingan induk (untuk baris komentar/reply). |
+| `parent_comment_id`| String | ID komentar induk jika baris ini merupakan balasan (*reply*). |
+| `comment_id` | String | ID unik komentar. |
+| `comment_text` | String | Isi teks komentar pengguna. |
+| `comment_author_username`| String | Username dari pengguna yang menulis komentar. |
+| `comment_author_name` | String | Nama profil pengguna yang menulis komentar. |
+| `comment_author_id` | String | ID unik pengguna yang menulis komentar. |
+| `comment_author_pic` | String | URL foto profil dari pengguna yang berkomentar. |
+| `comment_author_verified`| Boolean | Status centang biru / verifikasi dari akun komentator. |
+
+---
+
+## 🛠️ Pemecahan Masalah (Troubleshooting & FAQ)
+
+1. **Muncul pesan `"Akun terkena checkpoint tantangan verifikasi"`:**
+   - Meta mendeteksi aktivitas login yang tidak biasa dan meminta verifikasi pemilik akun.
+   - **Solusi:** Buka browser Anda, akses [instagram.com](https://www.instagram.com), dan selesaikan tantangan verifikasi (SMS/Email/CAPTCHA) yang muncul. Setelah akun normal kembali, salin nilai `sessionid` terbaru ke `.env`.
+
+2. **Muncul pesan `"Terkena Rate Limit Instagram (HTTP 429)"`:**
+   - Anda melakukan permintaan data terlalu cepat dalam waktu singkat.
+   - **Solusi:** Biarkan program berjalan. Program memiliki sistem *auto-cooldown* otomatis yang akan menunggu hingga kuota pulih dan langsung melanjutkan penarikan data tanpa kehilangan progres berkat *auto-checkpoint*. Anda juga bisa menaikkan `DELAY_MIN` dan `DELAY_MAX` di `.env` (misalnya menjadi `4.0` dan `8.0`).
+
+3. **Status akun privat:**
+   - Postingan akun privat hanya dapat ditarik jika akun Instagram yang Anda gunakan di browser sudah mem-follow akun target tersebut.
+
+---
+
+## ⚖️ Lisensi & Disclaimer
+
+Proyek ini dibuat untuk tujuan edukasi, riset data, dan analisis akademis. Penggunaan program ini harus mematuhi Ketentuan Layanan (*Terms of Service*) platform terkait. Pengembang tidak bertanggung jawab atas penyalahgunaan atau tindakan penegakan akun oleh pihak ketiga.

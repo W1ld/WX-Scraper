@@ -5,35 +5,57 @@ from typing import Dict, Optional, Tuple
 import httpx
 import config
 
-BEARER_TOKEN = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+# ID Aplikasi Web Resmi Instagram
+IG_APP_ID = "936619743392459"
 
-class TwitterClient:
+class InstagramClient:
     """
-    Modern Twitter GraphQL Client authenticated via browser session cookies (auth_token & ct0).
-    Bypasses broken client_transaction JS challenges.
+    Klien Instagram Web Async berbasis cookie sesi peramban (sessionid & csrftoken).
+    Berjalan langsung via HTTP/2 tanpa beban peramban Selenium/Playwright.
     """
-    def __init__(self, auth_token: str, ct0: str, proxy: Optional[str] = None):
-        self.auth_token = auth_token
-        self.ct0 = ct0
+    def __init__(
+        self,
+        session_id: str = "",
+        csrf_token: str = "",
+        ds_user_id: str = "",
+        proxy: Optional[str] = None
+    ):
+        self.session_id = session_id
+        self.csrf_token = csrf_token
+        self.ds_user_id = ds_user_id
         self.proxy = proxy
-        
+
         self.headers = {
-            'authorization': BEARER_TOKEN,
-            'x-csrf-token': self.ct0,
+            'authority': 'www.instagram.com',
+            'accept': '*/*',
+            'accept-language': 'en-US,en;q=0.9,id;q=0.8',
+            'referer': 'https://www.instagram.com/',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-            'content-type': 'application/json',
-            'referer': 'https://x.com/',
-            'x-twitter-active-user': 'yes',
-            'x-twitter-auth-type': 'OAuth2Session',
-            'x-twitter-client-language': config.DEFAULT_LANG,
+            'x-asbd-id': '129477',
+            'x-csrftoken': self.csrf_token or '',
+            'x-ig-app-id': IG_APP_ID,
+            'x-ig-www-claim': '0',
+            'x-requested-with': 'XMLHttpRequest',
+            'sec-ch-ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
         }
-        self.cookies = {
-            'auth_token': self.auth_token,
-            'ct0': self.ct0,
-        }
+
+        self.cookies = {}
+        if self.session_id:
+            self.cookies['sessionid'] = self.session_id
+        if self.csrf_token:
+            self.cookies['csrftoken'] = self.csrf_token
+        if self.ds_user_id:
+            self.cookies['ds_user_id'] = self.ds_user_id
+
         self._http: Optional[httpx.AsyncClient] = None
 
     def get_http_client(self) -> httpx.AsyncClient:
+        """Mengembalikan instans httpx.AsyncClient yang digunakan kembali."""
         if self._http is None or self._http.is_closed:
             self._http = httpx.AsyncClient(
                 headers=self.headers,
@@ -45,104 +67,140 @@ class TwitterClient:
         return self._http
 
     async def close(self):
+        """Menutup koneksi HTTP client."""
         if self._http and not self._http.is_closed:
             await self._http.aclose()
 
-    async def test_session(self) -> bool:
-        """Tests if the cookies are valid."""
-        url = 'https://x.com/i/api/graphql/5XShkXk2oO2J7SYmTu6pvw/Viewer'
-        body = {
-            'variables': {},
-            'features': {
-                "rweb_tipjar_consumption_enabled": True,
-                "responsive_web_graphql_exclude_directive_enabled": True,
-                "verified_phone_label_enabled": False
-            },
-            'queryId': '5XShkXk2oO2J7SYmTu6pvw'
-        }
+    async def test_session(self) -> Tuple[bool, str]:
+        """
+        Menguji validitas cookie sesi ke endpoint profil Instagram.
+        Mengembalikan (is_valid, message).
+        """
+        url = 'https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram'
         http = self.get_http_client()
         try:
-            r = await http.post(url, json=body)
-            return r.status_code == 200
-        except Exception:
-            return False
+            r = await http.get(url, headers={'referer': 'https://www.instagram.com/instagram/'})
+            if r.status_code == 200:
+                data = r.json()
+                if "data" in data and "user" in data["data"]:
+                    return True, "Sesi Instagram aktif dan terverifikasi."
+                return False, "Format respon tidak sesuai."
+            elif r.status_code == 429:
+                return False, "Rate limit terdeteksi saat uji koneksi. Tunggu sejenak."
+            elif "checkpoint_required" in r.text:
+                return False, "Akun terkena checkpoint tantangan verifikasi oleh Instagram."
+            else:
+                return False, f"Respon server HTTP {r.status_code}."
+        except Exception as e:
+            return False, f"Koneksi gagal: {str(e)}"
 
-async def get_twitter_client(force_login: bool = False) -> TwitterClient:
+async def get_instagram_client(force_login: bool = False) -> InstagramClient:
     """
-    Initializes and authenticates the Twitter Client using browser session cookies.
-    1. Loads existing cookies.json if valid.
-    2. Otherwise uses AUTH_TOKEN & CT0 from .env or prompts interactively.
+    Inisialisasi klien Instagram:
+    1. Cek file cookies.json yang sudah tersimpan.
+    2. Cek variabel environment dari .env.
+    3. Jika belum ada atau force_login=True, minta input interaktif.
     """
     cookies_path = Path(config.COOKIES_FILE)
 
-    # 1. Coba gunakan file cookies.json yang sudah tersimpan
+    # 1. Coba gunakan file cookies.json
     if not force_login and cookies_path.exists():
         try:
             with open(cookies_path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
-            auth_token = saved.get("auth_token", "")
-            ct0 = saved.get("ct0", "")
-            if auth_token and ct0:
-                print(f"[+] Memuat cookies dari: {cookies_path}")
-                client = TwitterClient(auth_token=auth_token, ct0=ct0, proxy=config.PROXY)
-                if await client.test_session():
-                    print("[OK] Berhasil terhubung ke Twitter menggunakan session cookies.")
+            session_id = saved.get("sessionid", "") or saved.get("IG_SESSION_ID", "")
+            csrf_token = saved.get("csrftoken", "") or saved.get("IG_CSRF_TOKEN", "")
+            ds_user_id = saved.get("ds_user_id", "") or saved.get("IG_DS_USER_ID", "")
+            
+            if session_id:
+                print(f"[+] Memuat cookies sesi dari: {cookies_path}")
+                client = InstagramClient(
+                    session_id=session_id,
+                    csrf_token=csrf_token,
+                    ds_user_id=ds_user_id,
+                    proxy=config.PROXY
+                )
+                valid, msg = await client.test_session()
+                if valid:
+                    print(f"[OK] {msg}")
                     return client
                 else:
-                    print("[!] Cookies di cookies.json kedaluwarsa.")
+                    print(f"[!] Cookies di cookies.json tidak valid: {msg}")
         except Exception as e:
-            print(f"[!] Gagal memuat cookies.json: {e}")
+            print(f"[!] Gagal membaca cookies.json: {e}")
 
-    # 2. Gunakan AUTH_TOKEN dan CT0 dari file .env jika ada
-    if not force_login and config.AUTH_TOKEN and config.CT0:
-        print("[+] Menggunakan AUTH_TOKEN & CT0 dari file .env...")
-        client = TwitterClient(auth_token=config.AUTH_TOKEN, ct0=config.CT0, proxy=config.PROXY)
-        if await client.test_session():
-            print("[OK] Berhasil terhubung ke Twitter via .env!")
-            # Simpan ke cookies.json agar ter-cache
+    # 2. Gunakan variabel dari .env
+    if not force_login and config.IG_SESSION_ID:
+        print("[+] Menggunakan IG_SESSION_ID dari file .env...")
+        client = InstagramClient(
+            session_id=config.IG_SESSION_ID,
+            csrf_token=config.IG_CSRF_TOKEN,
+            ds_user_id=config.IG_DS_USER_ID,
+            proxy=config.PROXY
+        )
+        valid, msg = await client.test_session()
+        if valid:
+            print(f"[OK] {msg}")
+            # Simpan cache ke cookies.json
             cookies_path.parent.mkdir(parents=True, exist_ok=True)
             with open(cookies_path, "w", encoding="utf-8") as f:
-                json.dump({"auth_token": config.AUTH_TOKEN, "ct0": config.CT0}, f, indent=2)
+                json.dump({
+                    "sessionid": config.IG_SESSION_ID,
+                    "csrftoken": config.IG_CSRF_TOKEN,
+                    "ds_user_id": config.IG_DS_USER_ID
+                }, f, indent=2)
             return client
         else:
-            print("[!] Cookies di .env tidak valid atau ditolak Twitter.")
+            print(f"[!] Cookies di .env ditolak Instagram: {msg}")
 
-    # 3. Jika belum diset di .env atau force_login=True, minta input cookies secara interaktif
+    # 3. Input interaktif
     return await prompt_and_save_cookies(cookies_path)
 
-async def prompt_and_save_cookies(cookies_path: Path | None = None) -> TwitterClient:
+async def prompt_and_save_cookies(cookies_path: Optional[Path] = None) -> InstagramClient:
     """
-    Panduan interaktif untuk memasukkan auth_token dan ct0 dari browser.
+    Panduan terminal interaktif untuk menginput cookie sesi dari peramban.
     """
     if cookies_path is None:
         cookies_path = Path(config.COOKIES_FILE)
 
-    print("\n" + "="*70)
-    print("AUTENTIKASI TWITTER / X (SESI COOKIES)")
-    print("="*70)
-    print("Masukkan 'auth_token' dan 'ct0' dari browser Anda:")
+    print("\n" + "=" * 72)
+    print("AUTENTIKASI INSTAGRAM (SESI COOKIES BROWSER)")
+    print("=" * 72)
+    print("Program membutuhkan 'sessionid' dari browser Anda untuk membaca data.")
     print("\nCara mengambil dari browser (Hanya butuh 15 detik):")
-    print("1. Buka https://x.com di browser (Chrome / Edge / Firefox) & pastikan sudah login.")
-    print("2. Tekan tombol F12 (Developer Tools) -> Masuk ke tab 'Application' (atau 'Storage').")
-    print("3. Di panel kiri, klik 'Cookies' -> 'https://x.com'.")
-    print("4. Salin nilai (Value) dari cookie 'auth_token' dan 'ct0'.")
-    print("="*70 + "\n")
+    print("1. Buka https://www.instagram.com di browser (Chrome / Edge / Firefox).")
+    print("2. Pastikan sudah login ke akun Instagram Anda.")
+    print("3. Tekan F12 (Developer Tools) -> Masuk ke tab 'Application' (atau 'Storage').")
+    print("4. Di panel kiri, klik 'Cookies' -> 'https://www.instagram.com'.")
+    print("5. Salin nilai (Value) dari 'sessionid' dan 'csrftoken'.")
+    print("=" * 72 + "\n")
 
-    auth_token = input("Masukkan nilai 'auth_token': ").strip()
-    ct0 = input("Masukkan nilai 'ct0': ").strip()
+    session_id = input("Masukkan nilai 'sessionid': ").strip()
+    csrf_token = input("Masukkan nilai 'csrftoken' (opsional, tekan Enter jika dilewati): ").strip()
+    ds_user_id = input("Masukkan nilai 'ds_user_id' (opsional, tekan Enter jika dilewati): ").strip()
 
-    if not auth_token or not ct0:
-        raise ValueError("Nilai auth_token dan ct0 tidak boleh kosong!")
+    if not session_id:
+        raise ValueError("Nilai 'sessionid' tidak boleh kosong!")
 
-    print("\n[+] Menguji validitas cookies ke Twitter...")
-    client = TwitterClient(auth_token=auth_token, ct0=ct0, proxy=config.PROXY)
-    
-    if await client.test_session():
+    print("\n[+] Menguji validitas cookies ke Instagram...")
+    client = InstagramClient(
+        session_id=session_id,
+        csrf_token=csrf_token,
+        ds_user_id=ds_user_id,
+        proxy=config.PROXY
+    )
+
+    valid, msg = await client.test_session()
+    if valid:
         cookies_path.parent.mkdir(parents=True, exist_ok=True)
         with open(cookies_path, "w", encoding="utf-8") as f:
-            json.dump({"auth_token": auth_token, "ct0": ct0}, f, indent=2)
-        print("[OK] Berhasil terhubung ke Twitter!")
-        print(f"[OK] Sesi telah disimpan ke: {cookies_path}\n")
+            json.dump({
+                "sessionid": session_id,
+                "csrftoken": csrf_token,
+                "ds_user_id": ds_user_id
+            }, f, indent=2)
+        print(f"[OK] {msg}")
+        print(f"[OK] Sesi tersimpan di: {cookies_path}\n")
         return client
     else:
-        raise ValueError("Cookies tidak valid atau ditolak oleh Twitter. Pastikan akun masih aktif login di browser.")
+        raise ValueError(f"Cookies ditolak Instagram: {msg}. Pastikan Anda login di browser dan akun tidak terkunci.")

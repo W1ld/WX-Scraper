@@ -1,10 +1,10 @@
 import argparse
 import asyncio
-from datetime import datetime
+import os
 import sys
 from typing import List, Optional
 
-# Fix Windows console encoding for UTF-8 characters and emojis
+# Mengatur encoding konsol Windows untuk karakter UTF-8 dan emoji
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -17,13 +17,14 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt, IntPrompt
 
-from client_manager import get_twitter_client, prompt_and_save_cookies
+from client_manager import get_instagram_client, prompt_and_save_cookies
 from scraper import (
-    search_tweets,
-    search_tweets_with_replies,
-    get_tweet_detail_and_replies,
-    get_multiple_tweets_detail_and_replies,
-    extract_tweet_ids
+    get_user_profile,
+    scrape_profile_posts,
+    scrape_post_comments,
+    scrape_multiple_posts_comments,
+    scrape_hashtag_posts,
+    extract_shortcode
 )
 from exporter import export_data
 import config
@@ -32,14 +33,14 @@ console = Console()
 
 def display_banner():
     console.print(Panel.fit(
-        "[bold cyan]WX-Scraper (Twitter / X Data Extraction Suite)[/bold cyan]\n"
-        "[dim]Tool Scraping Data Twitter: Search Query, Search + Replies per Tweet, & Tweet Details[/dim]\n"
-        "[bold yellow]Developer:[/bold yellow] [bold white]@W1ld[/bold white] | [bold yellow]GitHub:[/bold yellow] [bold green]https://github.com/W1ld/WX-Scraper[/bold green]",
-        border_style="cyan"
+        "[bold magenta]WIG-Scraper (Instagram Data Extraction Suite)[/bold magenta]\n"
+        "[dim]Tool Scraping Data Instagram: Profile Posts, Comments, 2-in-1 Drill-Down, & Hashtags[/dim]\n"
+        "[bold yellow]Developer:[/bold yellow] [bold white]@W1ld[/bold white] | [bold yellow]Repository:[/bold yellow] [bold cyan]https://github.com/W1ld/WIG-Scraper[/bold cyan]",
+        border_style="magenta"
     ))
 
-def show_preview_table(data: List[dict], max_rows: int = 5):
-    """Menampilkan tabel preview data hasil scraping di terminal."""
+def show_preview_table(data: List[dict], max_rows: int = 6):
+    """Menampilkan tabel preview rapi data hasil scraping di terminal."""
     if not data:
         return
     
@@ -47,381 +48,321 @@ def show_preview_table(data: List[dict], max_rows: int = 5):
     table.add_column("No", style="dim", width=4)
     table.add_column("Tipe", style="yellow", width=10)
     table.add_column("Username", style="cyan", width=18)
-    table.add_column("Text (Preview)", style="white")
-    table.add_column("Likes", justify="right", width=7)
-    table.add_column("Replies", justify="right", width=8)
+    table.add_column("Konten / Teks (Preview)", style="white")
+    table.add_column("Likes", justify="right", width=8)
+    table.add_column("Komentar", justify="right", width=9)
 
     for i, item in enumerate(data[:max_rows], 1):
-        row_type = item.get("row_type", "main_tweet")
-        type_str = "[green]Tweet[/green]" if row_type == "main_tweet" else "[blue]Reply[/blue]"
+        row_type = item.get("row_type", "post")
+        if row_type == "post":
+            type_str = "[green]Post[/green]"
+            username = item.get("owner_username", "")
+            text_preview = (item.get("caption", "") or "").replace("\n", " ")
+            comments_num = str(item.get("comments_count", 0))
+        elif row_type == "comment":
+            type_str = "[blue]Comment[/blue]"
+            username = item.get("comment_author_username", "")
+            text_preview = (item.get("comment_text", "") or "").replace("\n", " ")
+            comments_num = str(item.get("comments_count", 0))
+        else:
+            type_str = "[cyan]Reply[/cyan]"
+            username = item.get("comment_author_username", "")
+            text_preview = (item.get("comment_text", "") or "").replace("\n", " ")
+            comments_num = "-"
         
-        text_preview = (item.get("text", "") or "").replace("\n", " ")
         if len(text_preview) > 55:
             text_preview = text_preview[:52] + "..."
             
-        username_str = item.get('username', '')
         table.add_row(
             str(i),
             type_str,
-            f"@{username_str}" if username_str else "@unknown",
+            f"@{username}" if username else "@unknown",
             text_preview,
-            str(item.get("likes", 0)),
-            str(item.get("replies", 0))
+            str(item.get("likes_count", 0)),
+            comments_num
         )
 
     try:
         console.print(table)
     except Exception:
-        # Fallback print if console fails
         for i, item in enumerate(data[:max_rows], 1):
-            print(f"[{i}] @{item.get('username')}: {item.get('text', '')[:60]}... (Likes: {item.get('likes')})")
+            print(f"[{i}] {item.get('row_type')}: {item.get('caption') or item.get('comment_text', '')[:50]}")
 
     if len(data) > max_rows:
         console.print(f"[dim]... dan {len(data) - max_rows} baris data lainnya tersimpan di file output.[/dim]\n")
 
-def pause_prompt(msg: str = "\nTekan Enter untuk melanjutkan..."):
+def pause_prompt(msg: str = "\nTekan Enter untuk kembali ke menu utama..."):
     try:
         input(msg)
     except (EOFError, KeyboardInterrupt):
         pass
 
-def validate_date_format(date_str: str) -> bool:
-    """Memeriksa apakah format string tanggal sesuai dengan YYYY-MM-DD dan valid kalendernya."""
-    if not date_str or not date_str.strip():
-        return True
-    try:
-        datetime.strptime(date_str.strip(), "%Y-%m-%d")
-        return True
-    except ValueError:
-        return False
+# ==============================================================================
+# MENU HANDLERS
+# ==============================================================================
 
-def prompt_optional_date(prompt_text: str) -> Optional[str]:
-    """Menanyakan input tanggal opsional (format YYYY-MM-DD), pengguna bisa menekan Enter untuk melewati."""
-    while True:
-        val = Prompt.ask(prompt_text, default="", show_default=False).strip()
-        if not val:
-            return None
-        if validate_date_format(val):
-            return val
-        console.print("[bold red][!] Format tanggal tidak valid. Harap gunakan format YYYY-MM-DD (contoh: 2024-01-31) atau tekan Enter untuk lewati.[/bold red]")
+async def handle_menu_profile_posts(client, drill_down: bool = False):
+    """Menangani scraping postingan akun/profil pengguna."""
+    console.print("\n[bold cyan]=== SCRAPE POSTINGAN PROFIL AKUN ===[/bold cyan]")
+    username = Prompt.ask("Masukkan username target (contoh: [green]natgeo[/green] atau [green]@kemnaker[/green])").strip()
+    if not username:
+        return
 
-def build_export_prefix(base: str, query: str, since_date: Optional[str] = None, until_date: Optional[str] = None) -> str:
-    """Membuat prefix nama file ekspor yang memuat informasi tanggal jika filter aktif."""
-    parts = [f"{base}_{query}"]
-    if since_date:
-        parts.append(f"since_{since_date}")
-    if until_date:
-        parts.append(f"until_{until_date}")
-    return "_".join(parts)
-
-async def interactive_menu():
-    """Menu CLI interaktif yang mudah digunakan."""
-    client = None
+    limit = IntPrompt.ask("Jumlah postingan yang ingin diambil", default=30)
     
-    while True:
-        display_banner()
-        console.print("[bold yellow]Pilih Fitur Scraping:[/bold yellow]")
-        console.print("  [bold green]1.[/bold green] Cari Tweet berdasarkan Kata Kunci / Hashtag (Hanya Tweet Utama)")
-        console.print("  [bold green]2.[/bold green] Ambil Detail Tweet & Balasan / Komentar (Bisa 1 atau Banyak Tweet Sekaligus)")
-        console.print("  [bold green]3.[/bold green] Cari Tweet + Ambil Komentar/Replies untuk Setiap Tweet (Kombinasi Fitur 1 & 2)")
-        console.print("  [bold green]4.[/bold green] Perbarui Sesi Login (Masukkan auth_token & ct0 baru)")
-        console.print("  [bold red]5.[/bold red] Keluar (Exit)")
+    max_comments = 20
+    if drill_down:
+        max_comments = IntPrompt.ask("Maksimal komentar per postingan yang diambil (drill-down)", default=20)
 
-        choice = Prompt.ask(
-            "\n[?] Masukkan pilihan Anda",
-            choices=["1", "2", "3", "4", "5"],
-            default="5",
-            show_choices=False,
-            show_default=False,
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="both")
+
+    with console.status(f"[bold green]Menghubungi Instagram & mengambil data @{username}...[/bold green]"):
+        data = await scrape_profile_posts(
+            client=client,
+            username=username,
+            limit=limit,
+            fetch_comments=drill_down,
+            max_comments_per_post=max_comments
         )
 
-        if choice == "5":
-            console.print("[bold green]Terima kasih telah menggunakan WX Scraper![/bold green]")
+    if data:
+        show_preview_table(data)
+        prefix = f"profile_{username.lstrip('@')}" + ("_with_comments" if drill_down else "")
+        export_data(data, prefix=prefix, export_format=format_choice)
+    else:
+        console.print("[yellow]Tidak ada postingan yang berhasil diambil.[/yellow]")
+
+    pause_prompt()
+
+async def handle_menu_post_comments(client):
+    """Menangani scraping komentar dari satu postingan (URL / shortcode)."""
+    console.print("\n[bold cyan]=== SCRAPE KOMENTAR DARI POSTINGAN ===[/bold cyan]")
+    post_input = Prompt.ask(
+        "Masukkan URL postingan atau Shortcode\n(contoh: [green]https://www.instagram.com/p/DBabc123/[/green] atau [green]DBabc123[/green])"
+    ).strip()
+    if not post_input:
+        return
+
+    shortcode = extract_shortcode(post_input)
+    limit = IntPrompt.ask("Jumlah komentar maksimal yang ingin diambil", default=50)
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="both")
+
+    with console.status(f"[bold green]Mengambil komentar dari post {shortcode}...[/bold green]"):
+        comments = await scrape_post_comments(
+            client=client,
+            post_input=shortcode,
+            limit=limit
+        )
+
+    if comments:
+        show_preview_table(comments)
+        export_data(comments, prefix=f"comments_{shortcode}", export_format=format_choice)
+    else:
+        console.print("[yellow]Tidak ada komentar yang ditemukan atau post bersifat privat/nonaktif.[/yellow]")
+
+    pause_prompt()
+
+async def handle_menu_batch_comments(client):
+    """Menangani scraping komentar dari beberapa link postingan sekaligus."""
+    console.print("\n[bold cyan]=== SCRAPE KOMENTAR BATCH (BEBERAPA POST SEKALIGUS) ===[/bold cyan]")
+    console.print("[dim]Masukkan daftar URL atau Shortcode (pisahkan dengan koma atau masukkan path file .txt):[/dim]")
+    user_input = Prompt.ask("Input URLs atau File path").strip()
+    if not user_input:
+        return
+
+    urls = []
+    if os.path.exists(user_input):
+        with open(user_input, "r", encoding="utf-8") as f:
+            urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+    else:
+        urls = [u.strip() for u in user_input.split(",") if u.strip()]
+
+    if not urls:
+        console.print("[red]Tidak ada URL atau shortcode yang valid ditemukan.[/red]")
+        pause_prompt()
+        return
+
+    limit_per_post = IntPrompt.ask("Batas komentar per masing-masing post", default=30)
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="both")
+
+    with console.status(f"[bold green]Memproses {len(urls)} postingan...[/bold green]"):
+        all_comments = await scrape_multiple_posts_comments(
+            client=client,
+            post_inputs=urls,
+            limit_per_post=limit_per_post
+        )
+
+    if all_comments:
+        show_preview_table(all_comments)
+        export_data(all_comments, prefix=f"batch_comments_{len(urls)}_posts", export_format=format_choice)
+    else:
+        console.print("[yellow]Tidak ada komentar yang berhasil diambil.[/yellow]")
+
+    pause_prompt()
+
+async def handle_menu_hashtag_posts(client):
+    """Menangani scraping postingan berdasarkan hashtag."""
+    console.print("\n[bold cyan]=== SCRAPE POSTINGAN BERDASARKAN HASHTAG ===[/bold cyan]")
+    hashtag = Prompt.ask("Masukkan hashtag (contoh: [green]teknologi[/green] atau [green]#kuliner[/green])").strip()
+    if not hashtag:
+        return
+
+    limit = IntPrompt.ask("Jumlah postingan maksimal yang ingin diambil", default=30)
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="both")
+
+    clean_tag = hashtag.lstrip("#")
+    with console.status(f"[bold green]Mencari postingan dengan hashtag #{clean_tag}...[/bold green]"):
+        data = await scrape_hashtag_posts(
+            client=client,
+            hashtag=clean_tag,
+            limit=limit
+        )
+
+    if data:
+        show_preview_table(data)
+        export_data(data, prefix=f"hashtag_{clean_tag}", export_format=format_choice)
+    else:
+        console.print(f"[yellow]Tidak ada postingan yang ditemukan untuk hashtag #{clean_tag}.[/yellow]")
+
+    pause_prompt()
+
+# ==============================================================================
+# CLI ARGUMENT RUNNER (HEADLESS / SCRIPT AUTOMATION)
+# ==============================================================================
+
+async def run_cli_arguments(args, client):
+    """Menjalankan mode CLI argumen untuk otomatisasi tanpa antarmuka interaktif."""
+    if args.profile:
+        print(f"[+] Menjalankan scrape profil: @{args.profile} (Limit: {args.limit})")
+        data = await scrape_profile_posts(
+            client=client,
+            username=args.profile,
+            limit=args.limit,
+            fetch_comments=args.drill_down,
+            max_comments_per_post=args.max_comments
+        )
+        if data:
+            prefix = f"profile_{args.profile.lstrip('@')}" + ("_with_comments" if args.drill_down else "")
+            export_data(data, prefix=prefix, export_format=args.format)
+
+    elif args.comments:
+        shortcode = extract_shortcode(args.comments)
+        print(f"[+] Menjalankan scrape komentar dari: {shortcode} (Limit: {args.limit})")
+        comments = await scrape_post_comments(
+            client=client,
+            post_input=shortcode,
+            limit=args.limit
+        )
+        if comments:
+            export_data(comments, prefix=f"comments_{shortcode}", export_format=args.format)
+
+    elif args.batch_urls:
+        urls = []
+        if os.path.exists(args.batch_urls):
+            with open(args.batch_urls, "r", encoding="utf-8") as f:
+                urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        else:
+            urls = [u.strip() for u in args.batch_urls.split(",") if u.strip()]
+        
+        all_comments = await scrape_multiple_posts_comments(
+            client=client,
+            post_inputs=urls,
+            limit_per_post=args.limit
+        )
+        if all_comments:
+            export_data(all_comments, prefix=f"batch_comments_{len(urls)}_posts", export_format=args.format)
+
+    elif args.hashtag:
+        clean_tag = args.hashtag.lstrip("#")
+        print(f"[+] Menjalankan scrape hashtag: #{clean_tag} (Limit: {args.limit})")
+        data = await scrape_hashtag_posts(
+            client=client,
+            hashtag=clean_tag,
+            limit=args.limit
+        )
+        if data:
+            export_data(data, prefix=f"hashtag_{clean_tag}", export_format=args.format)
+
+# ==============================================================================
+# MAIN ENTRYPOINT
+# ==============================================================================
+
+async def async_main():
+    parser = argparse.ArgumentParser(
+        description="WIG-Scraper: Tool Scraping Data Instagram Modern (Profile, Comments, Hashtags)"
+    )
+    parser.add_argument("--profile", type=str, help="Username Instagram yang ingin di-scrape postingannya")
+    parser.add_argument("--comments", type=str, help="URL atau shortcode postingan untuk di-scrape seluruh komentarnya")
+    parser.add_argument("--batch-urls", type=str, help="Daftar URL postingan (file .txt atau dipisah koma) untuk batch komentar")
+    parser.add_argument("--hashtag", type=str, help="Hashtag Instagram yang ingin dicari postingannya")
+    parser.add_argument("--drill-down", action="store_true", help="Gali komentar otomatis pada setiap postingan profil (fitur 2-in-1)")
+    parser.add_argument("--limit", type=int, default=30, help="Jumlah maksimal data yang diambil (default: 30)")
+    parser.add_argument("--max-comments", type=int, default=20, help="Batas maksimal komentar per post saat mode drill-down (default: 20)")
+    parser.add_argument("--format", type=str, choices=["csv", "json", "both"], default="both", help="Format ekspor file (default: both)")
+    parser.add_argument("--force-login", action="store_true", help="Paksa input ulang cookies sesi Instagram")
+
+    args = parser.parse_args()
+
+    display_banner()
+
+    # Inisialisasi klien
+    try:
+        client = await get_instagram_client(force_login=args.force_login)
+    except Exception as e:
+        console.print(f"[bold red][!] Gagal inisialisasi sesi Instagram:[/bold red] {e}")
+        return
+
+    # Jika pengguna menggunakan argumen baris perintah
+    has_cli_mode = any([args.profile, args.comments, args.batch_urls, args.hashtag])
+    if has_cli_mode:
+        await run_cli_arguments(args, client)
+        await client.close()
+        return
+
+    # Mode Interaktif Terminal Menu
+    while True:
+        console.clear()
+        display_banner()
+
+        menu_table = Table(title="Pilihan Menu Utama", show_header=False, border_style="cyan")
+        menu_table.add_column("No", style="bold yellow", width=4)
+        menu_table.add_column("Deskripsi Fitur")
+
+        menu_table.add_row("1", "Scrape Postingan dari Profil / Akun (@username)")
+        menu_table.add_row("2", "Scrape Postingan Profil + Komentar (2-in-1 Drill-Down)")
+        menu_table.add_row("3", "Scrape Seluruh Komentar dari Link / URL Postingan")
+        menu_table.add_row("4", "Scrape Komentar dari Beberapa URL Sekaligus (Batch)")
+        menu_table.add_row("5", "Scrape Postingan Berdasarkan Hashtag (#hashtag)")
+        menu_table.add_row("6", "Uji / Perbarui Cookies Sesi Instagram")
+        menu_table.add_row("0", "Keluar dari Aplikasi")
+
+        console.print(menu_table)
+        pilihan = Prompt.ask("\nPilih nomor menu", choices=["1", "2", "3", "4", "5", "6", "0"], default="1")
+
+        if pilihan == "1":
+            await handle_menu_profile_posts(client, drill_down=False)
+        elif pilihan == "2":
+            await handle_menu_profile_posts(client, drill_down=True)
+        elif pilihan == "3":
+            await handle_menu_post_comments(client)
+        elif pilihan == "4":
+            await handle_menu_batch_comments(client)
+        elif pilihan == "5":
+            await handle_menu_hashtag_posts(client)
+        elif pilihan == "6":
+            await client.close()
+            client = await prompt_and_save_cookies()
+            pause_prompt()
+        elif pilihan == "0":
+            console.print("[bold green]\nTerima kasih telah menggunakan WIG-Scraper![/bold green]")
+            await client.close()
             break
 
-        # Pastikan client terautentikasi
-        if client is None or choice == "4":
-            try:
-                client = await get_twitter_client(force_login=(choice == "4"))
-            except Exception as e:
-                console.print(f"[bold red][X] Gagal mengautentikasi: {e}[/bold red]")
-                pause_prompt("\nTekan Enter untuk kembali ke menu...")
-                continue
-            if choice == "4":
-                pause_prompt("\nTekan Enter untuk kembali ke menu...")
-                continue
-
-        # Option 1: Search Query Only
-        if choice == "1":
-            console.print("\n[bold cyan]--- [1] PENCARIAN TWEET (HANYA TWEET UTAMA) ---[/bold cyan]")
-            query = Prompt.ask("[?] Masukkan kata kunci")
-            if not query.strip():
-                console.print("[red]Kata kunci tidak boleh kosong.[/red]")
-                continue
-
-            sort_mode = Prompt.ask(
-                "[?] Urutan data",
-                choices=["top", "latest", "media"],
-                default="top",
-                show_choices=False,
-                show_default=False,
-            )
-            since_date = prompt_optional_date("[?] Filter tanggal mulai / Since (YYYY-MM-DD, tekan Enter untuk lewati)")
-            until_date = prompt_optional_date("[?] Filter tanggal akhir / Until (YYYY-MM-DD, tekan Enter untuk lewati)")
-
-            if since_date and until_date and since_date > until_date:
-                console.print(f"[bold yellow][!] Peringatan: Tanggal mulai ({since_date}) lebih besar dari tanggal akhir ({until_date}).[/bold yellow]")
-                if Prompt.ask(
-                    "[?] Tetap lanjutkan pencarian?",
-                    choices=["y", "n"],
-                    default="y",
-                    show_choices=False,
-                    show_default=False,
-                ) != "y":
-                    continue
-
-            count = IntPrompt.ask("[?] Jumlah tweet yang ingin diambil", default=50, show_default=False)
-            fmt = Prompt.ask(
-                "[?] Format ekspor",
-                choices=["both", "csv", "json"],
-                default="csv",
-                show_choices=False,
-                show_default=False,
-            )
-
-            file_prefix = build_export_prefix("search", query, since_date, until_date)
-
-            with console.status("[bold green]Sedang melakukan scraping tweet...[/bold green]", spinner="dots"):
-                tweets = await search_tweets(
-                    client,
-                    query=query,
-                    product=sort_mode.capitalize(),
-                    max_tweets=count,
-                    since_date=since_date,
-                    until_date=until_date
-                )
-
-            if tweets:
-                show_preview_table(tweets)
-                export_data(tweets, prefix=file_prefix, export_format=fmt)
-            else:
-                console.print("[yellow]Tidak ada tweet yang berhasil diambil.[/yellow]")
-
-        # Option 2: Tweet Detail & Replies (Single or Multiple Batch)
-        elif choice == "2":
-            console.print("\n[bold cyan]--- [2] DETAIL TWEET & REPLIES (BISA 1 ATAU BANYAK POSTINGAN) ---[/bold cyan]")
-            tweet_input = Prompt.ask("[?] Masukkan URL Tweet atau Tweet ID (bisa banyak, pisahkan dengan spasi/koma)")
-            if not tweet_input.strip():
-                console.print("[red]Input tidak boleh kosong.[/red]")
-                continue
-
-            tweet_ids = extract_tweet_ids(tweet_input)
-            if not tweet_ids:
-                console.print("[bold red][X] Tidak ditemukan Tweet ID atau URL status tweet yang valid.[/bold red]")
-                pause_prompt("\nTekan Enter untuk kembali ke menu...")
-                continue
-
-            if len(tweet_ids) > 1:
-                console.print(f"[bold green][+] Terdeteksi {len(tweet_ids)} tweet target untuk diproses.[/bold green]")
-
-            max_replies = IntPrompt.ask("[?] Jumlah balasan / replies maksimal per tweet", default=50, show_default=False)
-            fmt = Prompt.ask(
-                "[?] Format ekspor",
-                choices=["both", "csv", "json"],
-                default="csv",
-                show_choices=False,
-                show_default=False,
-            )
-
-            if len(tweet_ids) == 1:
-                prefix = f"tweet_{tweet_ids[0]}"
-                with console.status("[bold green]Sedang mengambil detail tweet & replies...[/bold green]", spinner="dots"):
-                    result = await get_tweet_detail_and_replies(client, tweet_id_or_url=tweet_ids[0], max_replies=max_replies)
-                main_tweet = result.get("main_tweet")
-                replies = result.get("replies", [])
-                all_data = ([main_tweet] if main_tweet else []) + replies
-            else:
-                prefix = f"batch_tweets_{len(tweet_ids)}_items"
-                all_data = await get_multiple_tweets_detail_and_replies(
-                    client=client,
-                    tweet_ids_or_urls=tweet_ids,
-                    max_replies=max_replies
-                )
-
-            if all_data:
-                show_preview_table(all_data)
-                export_data(all_data, prefix=prefix, export_format=fmt)
-            else:
-                console.print("[yellow]Tweet tidak ditemukan atau gagal diambil.[/yellow]")
-
-        # Option 3: Search Query + Replies per Tweet
-        elif choice == "3":
-            console.print("\n[bold cyan]--- [3] CARI TWEET + AMBIL KOMENTAR SETIAP TWEET ---[/bold cyan]")
-            query = Prompt.ask("[?] Masukkan kata kunci")
-            if not query.strip():
-                console.print("[red]Kata kunci tidak boleh kosong.[/red]")
-                continue
-
-            sort_mode = Prompt.ask(
-                "[?] Urutan tweet",
-                choices=["top", "latest", "media"],
-                default="top",
-                show_choices=False,
-                show_default=False,
-            )
-            since_date = prompt_optional_date("[?] Filter tanggal mulai / Since (YYYY-MM-DD, tekan Enter untuk lewati)")
-            until_date = prompt_optional_date("[?] Filter tanggal akhir / Until (YYYY-MM-DD, tekan Enter untuk lewati)")
-
-            if since_date and until_date and since_date > until_date:
-                console.print(f"[bold yellow][!] Peringatan: Tanggal mulai ({since_date}) lebih besar dari tanggal akhir ({until_date}).[/bold yellow]")
-                if Prompt.ask(
-                    "[?] Tetap lanjutkan pencarian?",
-                    choices=["y", "n"],
-                    default="y",
-                    show_choices=False,
-                    show_default=False,
-                ) != "y":
-                    continue
-
-            count = IntPrompt.ask("[?] Jumlah tweet utama yang ingin dicari", default=100, show_default=False)
-            replies_per_tweet = IntPrompt.ask("[?] Jumlah komentar per tweet yang ingin diambil (maksimal)", default=5, show_default=False)
-            fmt = Prompt.ask(
-                "[?] Format ekspor",
-                choices=["both", "csv", "json"],
-                default="csv",
-                show_choices=False,
-                show_default=False,
-            )
-
-            file_prefix = build_export_prefix("search_with_replies", query, since_date, until_date)
-
-            console.print(f"\n[dim]Memulai scraping {count} tweet '{query}' ({sort_mode}) dan maks {replies_per_tweet} komentar per tweet...[/dim]")
-            tweets_data = await search_tweets_with_replies(
-                client=client,
-                query=query,
-                product=sort_mode.capitalize(),
-                max_tweets=count,
-                replies_per_tweet=replies_per_tweet,
-                since_date=since_date,
-                until_date=until_date
-            )
-
-            if tweets_data:
-                show_preview_table(tweets_data)
-                export_data(tweets_data, prefix=file_prefix, export_format=fmt)
-            else:
-                console.print("[yellow]Tidak ada data yang berhasil diambil.[/yellow]")
-
-        pause_prompt("\nTekan Enter untuk melanjutkan...")
-
-async def run_cli_args(args):
-    """Eksekusi scraping langsung menggunakan command line arguments."""
-    client = await get_twitter_client(force_login=args.force_login)
-
-    # Validasi filter tanggal jika diberikan
-    if args.since and not validate_date_format(args.since):
-        console.print(f"[bold red]Error: Format --since '{args.since}' tidak valid. Gunakan format YYYY-MM-DD.[/bold red]")
-        sys.exit(1)
-    if args.until and not validate_date_format(args.until):
-        console.print(f"[bold red]Error: Format --until '{args.until}' tidak valid. Gunakan format YYYY-MM-DD.[/bold red]")
-        sys.exit(1)
-
-    if args.mode == "search":
-        if not args.query:
-            console.print("[bold red]Error: Argumen --query (-q) wajib diisi untuk mode search.[/bold red]")
-            sys.exit(1)
-        sort_choice = args.sort.capitalize() if args.sort else "Top"
-        file_prefix = build_export_prefix("search", args.query, args.since, args.until)
-        tweets = await search_tweets(
-            client,
-            query=args.query,
-            product=sort_choice,
-            max_tweets=args.count,
-            since_date=args.since,
-            until_date=args.until
-        )
-        if tweets:
-            show_preview_table(tweets)
-            export_data(tweets, prefix=file_prefix, export_format=args.format)
-
-    elif args.mode in ("search-replies", "combo"):
-        if not args.query:
-            console.print("[bold red]Error: Argumen --query (-q) wajib diisi untuk mode search-replies.[/bold red]")
-            sys.exit(1)
-        sort_choice = args.sort.capitalize() if args.sort else "Top"
-        file_prefix = build_export_prefix("search_with_replies", args.query, args.since, args.until)
-        tweets = await search_tweets_with_replies(
-            client=client,
-            query=args.query,
-            product=sort_choice,
-            max_tweets=args.count,
-            replies_per_tweet=args.replies_per_tweet,
-            since_date=args.since,
-            until_date=args.until
-        )
-        if tweets:
-            show_preview_table(tweets)
-            export_data(tweets, prefix=file_prefix, export_format=args.format)
-
-    elif args.mode == "tweet":
-        if not args.id:
-            console.print("[bold red]Error: Argumen --id (-i) wajib diisi untuk mode tweet.[/bold red]")
-            sys.exit(1)
-
-        tweet_ids = extract_tweet_ids(args.id)
-        if not tweet_ids:
-            console.print("[bold red]Error: Tidak ditemukan Tweet ID atau URL yang valid dari argumen --id.[/bold red]")
-            sys.exit(1)
-
-        if len(tweet_ids) == 1:
-            prefix = f"tweet_{tweet_ids[0]}"
-            result = await get_tweet_detail_and_replies(client, tweet_id_or_url=tweet_ids[0], max_replies=args.replies)
-            main_tweet = result.get("main_tweet")
-            replies = result.get("replies", [])
-            all_data = ([main_tweet] if main_tweet else []) + replies
-        else:
-            prefix = f"batch_tweets_{len(tweet_ids)}_items"
-            all_data = await get_multiple_tweets_detail_and_replies(
-                client=client,
-                tweet_ids_or_urls=tweet_ids,
-                max_replies=args.replies
-            )
-
-        if all_data:
-            show_preview_table(all_data)
-            export_data(all_data, prefix=prefix, export_format=args.format)
-        else:
-            console.print("[yellow]Tidak ada data tweet yang berhasil diambil.[/yellow]")
-
-    elif args.mode == "login":
-        await prompt_and_save_cookies(client)
-
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="WX-Scraper: Twitter / X Data Extraction CLI Tool")
-    parser.add_argument("--mode", "-m", choices=["search", "search-replies", "combo", "tweet", "login", "menu"], default=None,
-                        help="Mode operasi: search, search-replies (combo), tweet, login, atau menu interaktif")
-    parser.add_argument("--query", "-q", type=str, help="Kata kunci atau hashtag untuk pencarian tweet")
-    parser.add_argument("--sort", choices=["top", "latest", "media", "Top", "Latest", "Media"], default="top", help="Urutan pencarian tweet (default: top)")
-    parser.add_argument("--since", "-s", type=str, default=None, help="Filter tanggal mulai (format: YYYY-MM-DD, contoh: 2024-01-01) [opsional]")
-    parser.add_argument("--until", "-u", type=str, default=None, help="Filter tanggal akhir (format: YYYY-MM-DD, contoh: 2024-01-31) [opsional]")
-    parser.add_argument("--count", "-c", type=int, default=50, help="Jumlah tweet utama yang diambil (default: 50)")
-    parser.add_argument("--replies-per-tweet", "-rpt", type=int, default=5, help="Jumlah komentar per tweet untuk mode search-replies (default: 5)")
-    parser.add_argument("--id", "-i", type=str, help="Tweet ID atau URL status tweet (bisa 1 atau banyak dipisahkan spasi/koma)")
-    parser.add_argument("--replies", "-r", type=int, default=50, help="Jumlah replies maksimal untuk mode tweet (default: 50)")
-    parser.add_argument("--format", "-f", choices=["both", "csv", "json"], default="csv", help="Format output (default: csv)")
-    parser.add_argument("--force-login", action="store_true", help="Paksa perbarui sesi login (auth_token & ct0)")
-    return parser.parse_args()
-
-async def main():
-    args = parse_arguments()
-    if args.mode is None or args.mode == "menu":
-        await interactive_menu()
-    else:
-        await run_cli_args(args)
+def main():
+    try:
+        asyncio.run(async_main())
+    except KeyboardInterrupt:
+        print("\n[!] Program dihentikan oleh pengguna.")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Proses dibatalkan oleh pengguna (KeyboardInterrupt).[/yellow]")
-        sys.exit(0)
+    main()
