@@ -243,3 +243,54 @@ def parse_comment_item(
         "comment_author_pic": author_profile_pic,
         "comment_author_verified": author_is_verified
     }
+
+def parse_follower_item(
+    user: dict,
+    target_username: str = "",
+    target_user_id: str = "",
+    relationship_type: str = "follower"
+) -> Optional[Dict[str, Any]]:
+    """
+    Menormalisasi data profil pengikut (follower) atau following Instagram
+    menjadi dictionary seragam untuk ekspor CSV & JSON.
+    """
+    if not user:
+        return None
+
+    uid = str(user.get("pk") or user.get("id") or user.get("pk_id", ""))
+    if not uid:
+        return None
+
+    username = user.get("username", "")
+    full_name = user.get("full_name", "")
+    is_private = bool(user.get("is_private", False))
+    is_verified = bool(user.get("is_verified", False))
+    profile_pic = user.get("profile_pic_url", "")
+    has_anonymous_pic = bool(user.get("has_anonymous_profile_picture", False))
+    latest_reel = user.get("latest_reel_media") or 0
+    has_active_story = bool(latest_reel > 0)
+    profile_url = f"https://www.instagram.com/{username}/" if username else ""
+    fbid = str(user.get("fbid_v2", ""))
+
+    return {
+        "row_type": relationship_type,
+        "target_username": target_username,
+        "target_user_id": target_user_id,
+        "user_id": uid,
+        "username": username,
+        "full_name": full_name,
+        "profile_url": profile_url,
+        "is_private": is_private,
+        "is_verified": is_verified,
+        "has_anonymous_profile_picture": has_anonymous_pic,
+        "has_active_story": has_active_story,
+        "latest_reel_media": latest_reel,
+        "profile_pic_url": profile_pic,
+        "fbid_v2": fbid,
+        # Kolom opsional penunjang konsistensi tabular jika digabung
+        "caption": "",
+        "created_at": "",
+        "likes_count": 0,
+        "comments_count": 0
+    }
+

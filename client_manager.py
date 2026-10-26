@@ -5,6 +5,10 @@ from typing import Dict, Optional, Tuple
 import httpx
 import config
 
+from rich.console import Console
+
+console = Console()
+
 # ID Aplikasi Web Resmi Instagram
 IG_APP_ID = "936619743392459"
 
@@ -62,7 +66,8 @@ class InstagramClient:
                 cookies=self.cookies,
                 proxy=self.proxy,
                 timeout=30.0,
-                follow_redirects=True
+                follow_redirects=True,
+                http2=True
             )
         return self._http
 
@@ -73,24 +78,30 @@ class InstagramClient:
 
     async def test_session(self) -> Tuple[bool, str]:
         """
-        Menguji validitas cookie sesi ke endpoint profil Instagram.
+        Menguji validitas cookie sesi ke endpoint Instagram.
         Mengembalikan (is_valid, message).
         """
-        url = 'https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram'
         http = self.get_http_client()
         try:
-            r = await http.get(url, headers={'referer': 'https://www.instagram.com/instagram/'})
+            # Uji sesi melalui endpoint tags (sangat andal: mengembalikan HTTP 200 jika sesi aktif,
+            # dan HTTP 302/redirect jika cookie invalid atau belum login).
+            url = 'https://www.instagram.com/api/v1/tags/web_info/?tag_name=instagram'
+            r = await http.get(url, headers={'referer': 'https://www.instagram.com/explore/tags/instagram/'}, timeout=15.0)
             if r.status_code == 200:
                 data = r.json()
-                if "data" in data and "user" in data["data"]:
+                if "data" in data or data.get("status") == "ok":
                     return True, "Sesi Instagram aktif dan terverifikasi."
                 return False, "Format respon tidak sesuai."
+            elif r.status_code == 302:
+                return False, "Sesi login tidak valid atau sudah kedaluwarsa (diarahkan ke login)."
             elif r.status_code == 429:
                 return False, "Rate limit terdeteksi saat uji koneksi. Tunggu sejenak."
             elif "checkpoint_required" in r.text:
                 return False, "Akun terkena checkpoint tantangan verifikasi oleh Instagram."
             else:
                 return False, f"Respon server HTTP {r.status_code}."
+        except httpx.TimeoutException:
+            return False, "Koneksi ke Instagram timeout (lambat). Periksa koneksi internet Anda."
         except Exception as e:
             return False, f"Koneksi gagal: {str(e)}"
 
@@ -113,34 +124,38 @@ async def get_instagram_client(force_login: bool = False) -> InstagramClient:
             ds_user_id = saved.get("ds_user_id", "") or saved.get("IG_DS_USER_ID", "")
             
             if session_id:
-                print(f"[+] Memuat cookies sesi dari: {cookies_path}")
+                console.print(f"[cyan][*][/cyan] Memuat cookies sesi dari: [bold]{cookies_path}[/bold]")
                 client = InstagramClient(
                     session_id=session_id,
                     csrf_token=csrf_token,
                     ds_user_id=ds_user_id,
                     proxy=config.PROXY
                 )
-                valid, msg = await client.test_session()
+                with console.status("[bold cyan]Memverifikasi sesi cookies...[/bold cyan]", spinner="dots"):
+                    valid, msg = await client.test_session()
+                
                 if valid:
-                    print(f"[OK] {msg}")
+                    console.print(f"[bold green][✓][/bold green] [green]{msg}[/green]\n")
                     return client
                 else:
-                    print(f"[!] Cookies di cookies.json tidak valid: {msg}")
+                    console.print(f"[bold yellow][!][/bold yellow] [yellow]Cookies di cookies.json tidak valid: {msg}[/yellow]")
         except Exception as e:
-            print(f"[!] Gagal membaca cookies.json: {e}")
+            console.print(f"[bold red][!][/bold red] Gagal membaca cookies.json: {e}")
 
     # 2. Gunakan variabel dari .env
     if not force_login and config.IG_SESSION_ID:
-        print("[+] Menggunakan IG_SESSION_ID dari file .env...")
+        console.print("[cyan][*][/cyan] Memuat [bold]IG_SESSION_ID[/bold] dari file [bold].env[/bold]...")
         client = InstagramClient(
             session_id=config.IG_SESSION_ID,
             csrf_token=config.IG_CSRF_TOKEN,
             ds_user_id=config.IG_DS_USER_ID,
             proxy=config.PROXY
         )
-        valid, msg = await client.test_session()
+        with console.status("[bold cyan]Memverifikasi sesi .env...[/bold cyan]", spinner="dots"):
+            valid, msg = await client.test_session()
+
         if valid:
-            print(f"[OK] {msg}")
+            console.print(f"[bold green][✓][/bold green] [green]{msg}[/green]\n")
             # Simpan cache ke cookies.json
             cookies_path.parent.mkdir(parents=True, exist_ok=True)
             with open(cookies_path, "w", encoding="utf-8") as f:
@@ -151,7 +166,7 @@ async def get_instagram_client(force_login: bool = False) -> InstagramClient:
                 }, f, indent=2)
             return client
         else:
-            print(f"[!] Cookies di .env ditolak Instagram: {msg}")
+            console.print(f"[bold red][!][/bold red] [yellow]Cookies di .env ditolak Instagram: {msg}[/yellow]")
 
     # 3. Input interaktif
     return await prompt_and_save_cookies(cookies_path)

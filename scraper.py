@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import httpx
 import config
 from client_manager import InstagramClient, IG_APP_ID
-from parser import parse_user_profile, parse_post_item, parse_comment_item
+from parser import parse_user_profile, parse_post_item, parse_comment_item, parse_follower_item
 from exporter import save_checkpoint
 
 # Karakter Base64 URL untuk konversi shortcode <-> media_id Instagram
@@ -465,3 +465,265 @@ async def scrape_hashtag_posts(
         print(f"[!] Error saat scraping hashtag: {e}")
 
     return collected_data
+
+# ==============================================================================
+# 4. RESOLVE USERNAME KE USER_ID & SCRAPE FOLLOWERS / FOLLOWING
+# ==============================================================================
+
+def extract_username(url_or_user: str) -> str:
+    """Mengekstrak username bersih dari teks input, handle @, atau URL profil Instagram."""
+    cleaned = url_or_user.strip()
+    match = re.search(r"instagram\.com/([A-Za-z0-9_.-]+)", cleaned)
+    if match:
+        candidate = match.group(1).split("/")[0].split("?")[0]
+        if candidate.lower() not in ("p", "reel", "tv", "stories", "explore"):
+            return candidate
+    return cleaned.lstrip("@").strip("/ ")
+
+async def resolve_user_id(client: InstagramClient, username_or_id: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Mengonversi username, URL profil, atau user ID Instagram menjadi tuple (numeric_user_id, username_bersih).
+    """
+    cleaned = extract_username(username_or_id)
+    if not cleaned:
+        return None, None
+
+    # Jika input sudah berupa ID angka langsung
+    if cleaned.isdigit():
+        return cleaned, cleaned
+
+    http = client.get_http_client()
+    url = f"https://www.instagram.com/{cleaned}/"
+    headers = {
+        'referer': 'https://www.instagram.com/',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    }
+
+    try:
+        r = await http.get(url, headers=headers)
+        if r.status_code == 200:
+            html = r.text
+            # Ekstraksi jumlah followers/following untuk ringkasan info profil jika tersedia
+            desc_m = re.search(r'<meta\s+(?:property="og:description"|name="description")\s+content="([^"]+)"', html)
+            if desc_m:
+                desc = desc_m.group(1)
+                fol_m = re.search(r'([\d,.]+[KMkm]?)\s+Followers', desc, re.I)
+                ing_m = re.search(r'([\d,.]+[KMkm]?)\s+Following', desc, re.I)
+                posts_m = re.search(r'([\d,.]+[KMkm]?)\s+Posts', desc, re.I)
+                parts = []
+                if fol_m: parts.append(f"{fol_m.group(1)} Followers")
+                if ing_m: parts.append(f"{ing_m.group(1)} Following")
+                if posts_m: parts.append(f"{posts_m.group(1)} Posts")
+                if parts:
+                    print(f"[*] Info Profil @{cleaned}: {', '.join(parts)}")
+
+            # Ekstraksi ID dari embedded props / profile_id / page_id
+            m = re.search(r'"props":\s*\{\s*"id":\s*"(\d+)"', html)
+            if m:
+                return m.group(1), cleaned
+
+            m = re.search(r'"profile_id":\s*"(\d+)"', html)
+            if m:
+                return m.group(1), cleaned
+
+            m = re.search(r'"page_id":\s*"profilePage_(\d+)"', html)
+            if m:
+                return m.group(1), cleaned
+
+            m = re.search(r'"container_id":\s*"(\d+)"', html)
+            if m:
+                return m.group(1), cleaned
+        elif r.status_code == 404:
+            print(f"[!] Akun @{cleaned} tidak ditemukan.")
+            return None, cleaned
+        else:
+            print(f"[!] Respon profil @{cleaned}: HTTP {r.status_code}")
+    except Exception as e:
+        print(f"[!] Error saat pencarian ID @{cleaned}: {e}")
+
+    return None, cleaned
+
+async def scrape_profile_followers(
+    client: InstagramClient,
+    target: str,
+    limit: int = 50,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Mengambil daftar pengikut (followers) dari sebuah akun Instagram publik.
+    Mendukung input username (@username), link profil, maupun user ID langsung.
+    """
+    user_id, username = await resolve_user_id(client, target)
+    if not user_id:
+        print(f"[!] Gagal menentukan ID pengguna untuk: {target}")
+        return []
+
+    http = client.get_http_client()
+    collected_followers: List[Dict[str, Any]] = []
+    seen_ids = set()
+    cursor: Optional[str] = None
+    has_more = True
+    raw_count = 0
+    duplicate_count = 0
+
+    print(f"\n[+] Memulai penarikan pengikut @{username} (User ID: {user_id}, Target: {limit})...")
+
+    headers = {
+        'referer': f'https://www.instagram.com/{username}/'
+    }
+
+    while has_more and len(collected_followers) < limit:
+        count = min(50, limit - len(collected_followers))
+        url = f"https://www.instagram.com/api/v1/friendships/{user_id}/followers/?count={count}&search_surface=follow_list_page"
+        if cursor:
+            url += f"&max_id={cursor}"
+
+        try:
+            r = await http.get(url, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                users = data.get("users", [])
+                cursor = data.get("next_max_id")
+                has_more = bool(cursor and users)
+
+                if not users:
+                    break
+
+                for u in users:
+                    raw_count += 1
+                    item = parse_follower_item(
+                        user=u,
+                        target_username=username,
+                        target_user_id=user_id,
+                        relationship_type="follower"
+                    )
+                    if item and item["user_id"] not in seen_ids:
+                        seen_ids.add(item["user_id"])
+                        collected_followers.append(item)
+
+                        if progress_callback:
+                            progress_callback(len(collected_followers), limit, f"Follower: @{item['username']}")
+
+                        if len(collected_followers) >= limit:
+                            break
+                    else:
+                        duplicate_count += 1
+
+                # Auto-checkpoint setiap 50 follower tersimpan
+                if len(collected_followers) % 50 == 0:
+                    save_checkpoint(collected_followers, prefix=f"followers_{username}")
+
+                if has_more and len(collected_followers) < limit:
+                    await human_delay()
+
+            elif r.status_code == 429:
+                await handle_rate_limit(60, checkpoint_data=collected_followers, prefix=f"followers_{username}")
+                continue
+            elif "checkpoint_required" in r.text:
+                print("\n[!] Checkpoint verifikasi Instagram terpicu saat membaca followers.")
+                save_checkpoint(collected_followers, prefix=f"followers_{username}")
+                break
+            else:
+                print(f"[!] Gagal mengambil followers: HTTP {r.status_code}")
+                break
+
+        except Exception as e:
+            print(f"[!] Error saat mengambil followers: {e}")
+            break
+
+    if duplicate_count > 0:
+        print(f"[i] Info: Instagram mengembalikan total {raw_count} entri data ({duplicate_count} di antaranya merupakan duplikasi cursor pagination Instagram yang disaring). Total follower unik tersimpan: {len(collected_followers)}.")
+
+    return collected_followers
+
+async def scrape_profile_following(
+    client: InstagramClient,
+    target: str,
+    limit: int = 50,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Mengambil daftar akun yang diikuti (following) oleh target profil Instagram.
+    """
+    user_id, username = await resolve_user_id(client, target)
+    if not user_id:
+        print(f"[!] Gagal menentukan ID pengguna untuk: {target}")
+        return []
+
+    http = client.get_http_client()
+    collected_following: List[Dict[str, Any]] = []
+    seen_ids = set()
+    cursor: Optional[str] = None
+    has_more = True
+    raw_count = 0
+    duplicate_count = 0
+
+    print(f"\n[+] Memulai penarikan following @{username} (User ID: {user_id}, Target: {limit})...")
+
+    headers = {
+        'referer': f'https://www.instagram.com/{username}/'
+    }
+
+    while has_more and len(collected_following) < limit:
+        count = min(50, limit - len(collected_following))
+        url = f"https://www.instagram.com/api/v1/friendships/{user_id}/following/?count={count}"
+        if cursor:
+            url += f"&max_id={cursor}"
+
+        try:
+            r = await http.get(url, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                users = data.get("users", [])
+                cursor = data.get("next_max_id")
+                has_more = bool(cursor and users)
+
+                if not users:
+                    break
+
+                for u in users:
+                    raw_count += 1
+                    item = parse_follower_item(
+                        user=u,
+                        target_username=username,
+                        target_user_id=user_id,
+                        relationship_type="following"
+                    )
+                    if item and item["user_id"] not in seen_ids:
+                        seen_ids.add(item["user_id"])
+                        collected_following.append(item)
+
+                        if progress_callback:
+                            progress_callback(len(collected_following), limit, f"Following: @{item['username']}")
+
+                        if len(collected_following) >= limit:
+                            break
+                    else:
+                        duplicate_count += 1
+
+                if len(collected_following) % 50 == 0:
+                    save_checkpoint(collected_following, prefix=f"following_{username}")
+
+                if has_more and len(collected_following) < limit:
+                    await human_delay()
+
+            elif r.status_code == 429:
+                await handle_rate_limit(60, checkpoint_data=collected_following, prefix=f"following_{username}")
+                continue
+            elif "checkpoint_required" in r.text:
+                print("\n[!] Checkpoint verifikasi Instagram terpicu saat membaca following.")
+                save_checkpoint(collected_following, prefix=f"following_{username}")
+                break
+            else:
+                print(f"[!] Gagal mengambil following: HTTP {r.status_code}")
+                break
+
+        except Exception as e:
+            print(f"[!] Error saat mengambil following: {e}")
+            break
+
+    if duplicate_count > 0:
+        print(f"[i] Info: Instagram mengembalikan total {raw_count} entri data ({duplicate_count} di antaranya merupakan duplikasi cursor pagination Instagram yang disaring). Total following unik tersimpan: {len(collected_following)}.")
+
+    return collected_following
+

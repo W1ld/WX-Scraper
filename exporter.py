@@ -13,7 +13,7 @@ def sanitize_filename(name: str) -> str:
 def export_data(
     data: List[Dict[str, Any]],
     prefix: str = "instagram_data",
-    export_format: str = "both",
+    export_format: str = "csv",
     output_dir: Path | None = None
 ) -> Dict[str, str]:
     """

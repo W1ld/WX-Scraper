@@ -15,6 +15,7 @@ Aplikasi scraper Instagram modern berbasis Python dengan antarmuka CLI interakti
 - 💬 **Pencarian 2-in-1 (Postingan + Komentar Sekaligus):** Mampu menarik postingan profil sekaligus otomatis menggali (*drill-down*) seluruh komentar & balasan komentar (*threaded replies*) pada masing-masing post secara relasional.
 - 🔗 **Scrape Komentar Spesifik (URL / Shortcode):** Mengambil seluruh komentar dan balasan dari tautan postingan Instagram manapun (`/p/`, `/reel/`, atau `/tv/`).
 - 🏷️ **Scrape Berdasarkan Hashtag (#hashtag):** Mengambil postingan publik terindeks pada hashtag tertentu.
+- 👥 **Scrape Daftar Pengikut & Following (Followers / Following):** Mampu menarik daftar pengikut (*followers*) maupun daftar akun yang diikuti (*following*) dari akun publik mana pun secara lengkap dengan deteksi centang biru, status privat, foto profil kosong (*bot check*), dan status keaktifan Instagram Story.
 - ⏱️ **Jeda Acak Humanis (*Configurable Random Delay*):** Dilengkapi jeda waktu acak yang dapat dikonfigurasi (`DELAY_MIN` & `DELAY_MAX` di `.env`, default 3–6 detik) untuk mensimulasikan perilaku penjelajahan manusia asli (*human-like browsing*), meminimalkan risiko tantangan keamanan Meta.
 - 🛡️ **Manajemen Rate Limit & Auto-Checkpoint:** Jika terkena batas kuota (HTTP 429), program akan melakukan hitung mundur (*cooldown*) secara dinamis dan data yang sudah ditarik otomatis diamankan ke disk (`data/checkpoint_...csv`).
 - 🔒 **Aman (Session Cookies Auth):** Menggunakan token sesi browser resmi (`sessionid` & `csrftoken`) tanpa perlu memasukkan password akun ke dalam skrip.
@@ -167,7 +168,9 @@ WIG-Scraper (Instagram Data Extraction Suite)
 3. Scrape Seluruh Komentar dari Link / URL Postingan
 4. Scrape Komentar dari Beberapa URL Sekaligus (Batch)
 5. Scrape Postingan Berdasarkan Hashtag (#hashtag)
-6. Uji / Perbarui Cookies Sesi Instagram
+6. Scrape Daftar Pengikut Akun Publik (Followers) [BARU]
+7. Scrape Daftar Akun yang Diikuti (Following) [BARU]
+8. Uji / Perbarui Cookies Sesi Instagram
 0. Keluar dari Aplikasi
 ```
 
@@ -203,7 +206,18 @@ Bagi Anda yang ingin mengintegrasikan scraper ini ke dalam skrip otomatis atau c
    python main.py --hashtag teknologi --limit 40
    ```
 
-6. **Paksa Input Ulang Cookies:**
+6. **Scrape Daftar Followers (Pengikut) Akun Publik:**
+   ```bash
+   python main.py --followers cnnindonesia --limit 100
+   ```
+   *(Secara otomatis diekspor ke format CSV secara default).*
+
+7. **Scrape Daftar Following (Akun yang Diikuti):**
+   ```bash
+   python main.py --following cnnindonesia --limit 50
+   ```
+
+8. **Paksa Input Ulang Cookies:**
    ```bash
    python main.py --force-login
    ```
@@ -246,6 +260,25 @@ Dataset yang dihasilkan mencakup lebih dari 20 atribut lengkap untuk kebutuhan a
 | `comment_author_id` | String | ID unik pengguna yang menulis komentar. |
 | `comment_author_pic` | String | URL foto profil dari pengguna yang berkomentar. |
 | `comment_author_verified`| Boolean | Status centang biru / verifikasi dari akun komentator. |
+
+### 👥 Atribut Khusus Data Pengikut (Followers & Following)
+
+| Nama Kolom | Tipe | Deskripsi |
+| :--- | :--- | :--- |
+| `row_type` | String | Jenis baris data (`follower` atau `following`). |
+| `target_username` | String | Username akun target publik yang di-scrape. |
+| `target_user_id` | String | ID numerik unik akun target yang di-scrape. |
+| `user_id` | String | ID unik Instagram (PK) dari akun pengikut / following. |
+| `username` | String | Handle username pengguna (`@username`). |
+| `full_name` | String | Nama lengkap atau nama tampilan pengguna. |
+| `profile_url` | String | Tautan langsung menuju laman profil pengikut. |
+| `is_private` | Boolean | Status akun privat (`True`) atau publik (`False`). |
+| `is_verified` | Boolean | Status lencana centang biru resmi (*verified badge*). |
+| `has_anonymous_profile_picture` | Boolean | Menandakan apakah pengguna memakai foto default/kosong (*indikator bot*). |
+| `has_active_story` | Boolean | Menandakan apakah pengguna sedang memiliki Instagram Story aktif (24 jam terakhir). |
+| `latest_reel_media` | Integer | Unix timestamp media Story terbaru. |
+| `profile_pic_url` | String | Tautan gambar foto profil pengikut. |
+| `fbid_v2` | String | ID akun Facebook yang terhubung (*jika ada*). |
 
 ---
 

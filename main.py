@@ -16,6 +16,15 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt, IntPrompt
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    MofNCompleteColumn,
+    TaskProgressColumn,
+    TimeElapsedColumn
+)
 
 from client_manager import get_instagram_client, prompt_and_save_cookies
 from scraper import (
@@ -24,12 +33,28 @@ from scraper import (
     scrape_post_comments,
     scrape_multiple_posts_comments,
     scrape_hashtag_posts,
-    extract_shortcode
+    extract_shortcode,
+    scrape_profile_followers,
+    scrape_profile_following
 )
 from exporter import export_data
 import config
 
 console = Console()
+
+def create_scraper_progress() -> Progress:
+    """Membuat progress bar Rich informatif dengan hitungan item real-time (contoh: 25/50)."""
+    return Progress(
+        SpinnerColumn("dots"),
+        TextColumn("[bold cyan]{task.description}"),
+        BarColumn(bar_width=25, complete_style="green", finished_style="bold green"),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TextColumn("[dim]{task.fields[detail]}[/dim]"),
+        console=console,
+        transient=False
+    )
 
 def display_banner():
     console.print(Panel.fit(
@@ -44,6 +69,49 @@ def show_preview_table(data: List[dict], max_rows: int = 6):
     if not data:
         return
     
+    first_type = data[0].get("row_type", "")
+    if first_type in ("follower", "following"):
+        table = Table(
+            title=f"Preview Data Hasil Scraping ({'Followers' if first_type == 'follower' else 'Following'})",
+            show_lines=True,
+            header_style="bold magenta"
+        )
+        table.add_column("No", style="dim", width=4)
+        table.add_column("Tipe", style="yellow", width=11)
+        table.add_column("Username", style="cyan", width=18)
+        table.add_column("Nama Lengkap", style="white", width=22)
+        table.add_column("Privasi", justify="center", width=10)
+        table.add_column("Verified", justify="center", width=11)
+        table.add_column("Story Aktif", justify="center", width=12)
+
+        for i, item in enumerate(data[:max_rows], 1):
+            type_str = "[magenta]Follower[/magenta]" if item.get("row_type") == "follower" else "[yellow]Following[/yellow]"
+            uname = item.get("username", "")
+            fname = item.get("full_name", "") or "-"
+            is_priv = "[red]Private[/red]" if item.get("is_private") else "[green]Public[/green]"
+            is_ver = "[cyan]✓ Ya[/cyan]" if item.get("is_verified") else "[dim]Tidak[/dim]"
+            has_story = "[green]🟢 Ada[/green]" if item.get("has_active_story") else "[dim]-[/dim]"
+
+            table.add_row(
+                str(i),
+                type_str,
+                f"@{uname}" if uname else "@unknown",
+                fname[:20],
+                is_priv,
+                is_ver,
+                has_story
+            )
+
+        try:
+            console.print(table)
+        except Exception:
+            for i, item in enumerate(data[:max_rows], 1):
+                print(f"[{i}] @{item.get('username')} ({item.get('full_name')})")
+
+        if len(data) > max_rows:
+            console.print(f"[dim]... dan {len(data) - max_rows} baris data lainnya tersimpan di file output.[/dim]\n")
+        return
+
     table = Table(title="Preview Data Hasil Scraping", show_lines=True, header_style="bold magenta")
     table.add_column("No", style="dim", width=4)
     table.add_column("Tipe", style="yellow", width=10)
@@ -114,16 +182,23 @@ async def handle_menu_profile_posts(client, drill_down: bool = False):
     if drill_down:
         max_comments = IntPrompt.ask("Maksimal komentar per postingan yang diambil (drill-down)", default=20)
 
-    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="both")
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="csv")
 
-    with console.status(f"[bold green]Menghubungi Instagram & mengambil data @{username}...[/bold green]"):
+    with create_scraper_progress() as progress:
+        task_id = progress.add_task(f"Mengambil data @{username}", total=limit, detail="Menghubungi...")
+
+        def on_progress(current: int, total: int, detail: str):
+            progress.update(task_id, completed=current, total=total, detail=detail)
+
         data = await scrape_profile_posts(
             client=client,
             username=username,
             limit=limit,
             fetch_comments=drill_down,
-            max_comments_per_post=max_comments
+            max_comments_per_post=max_comments,
+            progress_callback=on_progress
         )
+        progress.update(task_id, completed=len(data), total=len(data), detail="Selesai")
 
     if data:
         show_preview_table(data)
@@ -145,14 +220,21 @@ async def handle_menu_post_comments(client):
 
     shortcode = extract_shortcode(post_input)
     limit = IntPrompt.ask("Jumlah komentar maksimal yang ingin diambil", default=50)
-    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="both")
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="csv")
 
-    with console.status(f"[bold green]Mengambil komentar dari post {shortcode}...[/bold green]"):
+    with create_scraper_progress() as progress:
+        task_id = progress.add_task(f"Mengambil komentar post {shortcode}", total=limit, detail="Menghubungi...")
+
+        def on_progress(current: int, total: int, detail: str):
+            progress.update(task_id, completed=current, total=total, detail=detail)
+
         comments = await scrape_post_comments(
             client=client,
             post_input=shortcode,
-            limit=limit
+            limit=limit,
+            progress_callback=on_progress
         )
+        progress.update(task_id, completed=len(comments), total=len(comments), detail="Selesai")
 
     if comments:
         show_preview_table(comments)
@@ -183,7 +265,7 @@ async def handle_menu_batch_comments(client):
         return
 
     limit_per_post = IntPrompt.ask("Batas komentar per masing-masing post", default=30)
-    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="both")
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="csv")
 
     with console.status(f"[bold green]Memproses {len(urls)} postingan...[/bold green]"):
         all_comments = await scrape_multiple_posts_comments(
@@ -208,21 +290,94 @@ async def handle_menu_hashtag_posts(client):
         return
 
     limit = IntPrompt.ask("Jumlah postingan maksimal yang ingin diambil", default=30)
-    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="both")
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="csv")
 
     clean_tag = hashtag.lstrip("#")
-    with console.status(f"[bold green]Mencari postingan dengan hashtag #{clean_tag}...[/bold green]"):
+    with create_scraper_progress() as progress:
+        task_id = progress.add_task(f"Mencari postingan #{clean_tag}", total=limit, detail="Menghubungi...")
+
+        def on_progress(current: int, total: int, detail: str):
+            progress.update(task_id, completed=current, total=total, detail=detail)
+
         data = await scrape_hashtag_posts(
             client=client,
             hashtag=clean_tag,
-            limit=limit
+            limit=limit,
+            progress_callback=on_progress
         )
+        progress.update(task_id, completed=len(data), total=len(data), detail="Selesai")
 
     if data:
         show_preview_table(data)
         export_data(data, prefix=f"hashtag_{clean_tag}", export_format=format_choice)
     else:
         console.print(f"[yellow]Tidak ada postingan yang ditemukan untuk hashtag #{clean_tag}.[/yellow]")
+
+    pause_prompt()
+
+async def handle_menu_followers(client):
+    """Menangani scraping daftar pengikut (followers) akun Instagram publik."""
+    console.print("\n[bold cyan]=== SCRAPE DAFTAR PENGIKUT (FOLLOWERS) AKUN PUBLIK ===[/bold cyan]")
+    target = Prompt.ask("Masukkan username atau URL profil target (contoh: [green]cnnindonesia[/green] atau [green]@kemnaker[/green])").strip()
+    if not target:
+        return
+
+    limit = IntPrompt.ask("Jumlah followers maksimal yang ingin diambil", default=50)
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="csv")
+
+    with create_scraper_progress() as progress:
+        task_id = progress.add_task(f"Mengambil followers {target}", total=limit, detail="Menghubungi...")
+
+        def on_progress(current: int, total: int, detail: str):
+            progress.update(task_id, completed=current, total=total, detail=detail)
+
+        followers = await scrape_profile_followers(
+            client=client,
+            target=target,
+            limit=limit,
+            progress_callback=on_progress
+        )
+        progress.update(task_id, completed=len(followers), total=len(followers), detail="Selesai")
+
+    if followers:
+        show_preview_table(followers)
+        clean_target = target.lstrip("@").replace("https://www.instagram.com/", "").strip("/ ")
+        export_data(followers, prefix=f"followers_{clean_target}", export_format=format_choice)
+    else:
+        console.print(f"[yellow]Tidak ada follower yang berhasil diambil untuk {target}.[/yellow]")
+
+    pause_prompt()
+
+async def handle_menu_following(client):
+    """Menangani scraping daftar akun yang diikuti (following) akun Instagram publik."""
+    console.print("\n[bold cyan]=== SCRAPE DAFTAR FOLLOWING (AKUN YANG DIIKUTI) ===[/bold cyan]")
+    target = Prompt.ask("Masukkan username atau URL profil target (contoh: [green]cnnindonesia[/green] atau [green]@kemnaker[/green])").strip()
+    if not target:
+        return
+
+    limit = IntPrompt.ask("Jumlah following maksimal yang ingin diambil", default=50)
+    format_choice = Prompt.ask("Format ekspor data", choices=["both", "csv", "json"], default="csv")
+
+    with create_scraper_progress() as progress:
+        task_id = progress.add_task(f"Mengambil following {target}", total=limit, detail="Menghubungi...")
+
+        def on_progress(current: int, total: int, detail: str):
+            progress.update(task_id, completed=current, total=total, detail=detail)
+
+        following = await scrape_profile_following(
+            client=client,
+            target=target,
+            limit=limit,
+            progress_callback=on_progress
+        )
+        progress.update(task_id, completed=len(following), total=len(following), detail="Selesai")
+
+    if following:
+        show_preview_table(following)
+        clean_target = target.lstrip("@").replace("https://www.instagram.com/", "").strip("/ ")
+        export_data(following, prefix=f"following_{clean_target}", export_format=format_choice)
+    else:
+        console.print(f"[yellow]Tidak ada following yang berhasil diambil untuk {target}.[/yellow]")
 
     pause_prompt()
 
@@ -233,26 +388,42 @@ async def handle_menu_hashtag_posts(client):
 async def run_cli_arguments(args, client):
     """Menjalankan mode CLI argumen untuk otomatisasi tanpa antarmuka interaktif."""
     if args.profile:
-        print(f"[+] Menjalankan scrape profil: @{args.profile} (Limit: {args.limit})")
-        data = await scrape_profile_posts(
-            client=client,
-            username=args.profile,
-            limit=args.limit,
-            fetch_comments=args.drill_down,
-            max_comments_per_post=args.max_comments
-        )
+        with create_scraper_progress() as progress:
+            task_id = progress.add_task(f"Scrape profil @{args.profile}", total=args.limit, detail="Menghubungi...")
+
+            def on_progress(current: int, total: int, detail: str):
+                progress.update(task_id, completed=current, total=total, detail=detail)
+
+            data = await scrape_profile_posts(
+                client=client,
+                username=args.profile,
+                limit=args.limit,
+                fetch_comments=args.drill_down,
+                max_comments_per_post=args.max_comments,
+                progress_callback=on_progress
+            )
+            progress.update(task_id, completed=len(data), total=len(data), detail="Selesai")
+
         if data:
             prefix = f"profile_{args.profile.lstrip('@')}" + ("_with_comments" if args.drill_down else "")
             export_data(data, prefix=prefix, export_format=args.format)
 
     elif args.comments:
         shortcode = extract_shortcode(args.comments)
-        print(f"[+] Menjalankan scrape komentar dari: {shortcode} (Limit: {args.limit})")
-        comments = await scrape_post_comments(
-            client=client,
-            post_input=shortcode,
-            limit=args.limit
-        )
+        with create_scraper_progress() as progress:
+            task_id = progress.add_task(f"Scrape komentar post {shortcode}", total=args.limit, detail="Menghubungi...")
+
+            def on_progress(current: int, total: int, detail: str):
+                progress.update(task_id, completed=current, total=total, detail=detail)
+
+            comments = await scrape_post_comments(
+                client=client,
+                post_input=shortcode,
+                limit=args.limit,
+                progress_callback=on_progress
+            )
+            progress.update(task_id, completed=len(comments), total=len(comments), detail="Selesai")
+
         if comments:
             export_data(comments, prefix=f"comments_{shortcode}", export_format=args.format)
 
@@ -264,24 +435,71 @@ async def run_cli_arguments(args, client):
         else:
             urls = [u.strip() for u in args.batch_urls.split(",") if u.strip()]
         
-        all_comments = await scrape_multiple_posts_comments(
-            client=client,
-            post_inputs=urls,
-            limit_per_post=args.limit
-        )
+        with console.status(f"[bold cyan]Memproses {len(urls)} postingan untuk penarikan komentar...[/bold cyan]", spinner="dots"):
+            all_comments = await scrape_multiple_posts_comments(
+                client=client,
+                post_inputs=urls,
+                limit_per_post=args.limit
+            )
         if all_comments:
             export_data(all_comments, prefix=f"batch_comments_{len(urls)}_posts", export_format=args.format)
 
     elif args.hashtag:
         clean_tag = args.hashtag.lstrip("#")
-        print(f"[+] Menjalankan scrape hashtag: #{clean_tag} (Limit: {args.limit})")
-        data = await scrape_hashtag_posts(
-            client=client,
-            hashtag=clean_tag,
-            limit=args.limit
-        )
+        with create_scraper_progress() as progress:
+            task_id = progress.add_task(f"Scrape hashtag #{clean_tag}", total=args.limit, detail="Menghubungi...")
+
+            def on_progress(current: int, total: int, detail: str):
+                progress.update(task_id, completed=current, total=total, detail=detail)
+
+            data = await scrape_hashtag_posts(
+                client=client,
+                hashtag=clean_tag,
+                limit=args.limit,
+                progress_callback=on_progress
+            )
+            progress.update(task_id, completed=len(data), total=len(data), detail="Selesai")
+
         if data:
             export_data(data, prefix=f"hashtag_{clean_tag}", export_format=args.format)
+
+    elif args.followers:
+        clean_target = args.followers.lstrip("@").replace("https://www.instagram.com/", "").strip("/ ")
+        with create_scraper_progress() as progress:
+            task_id = progress.add_task(f"Scrape followers @{clean_target}", total=args.limit, detail="Menghubungi...")
+
+            def on_progress(current: int, total: int, detail: str):
+                progress.update(task_id, completed=current, total=total, detail=detail)
+
+            followers = await scrape_profile_followers(
+                client=client,
+                target=args.followers,
+                limit=args.limit,
+                progress_callback=on_progress
+            )
+            progress.update(task_id, completed=len(followers), total=len(followers), detail="Selesai")
+
+        if followers:
+            export_data(followers, prefix=f"followers_{clean_target}", export_format=args.format)
+
+    elif args.following:
+        clean_target = args.following.lstrip("@").replace("https://www.instagram.com/", "").strip("/ ")
+        with create_scraper_progress() as progress:
+            task_id = progress.add_task(f"Scrape following @{clean_target}", total=args.limit, detail="Menghubungi...")
+
+            def on_progress(current: int, total: int, detail: str):
+                progress.update(task_id, completed=current, total=total, detail=detail)
+
+            following = await scrape_profile_following(
+                client=client,
+                target=args.following,
+                limit=args.limit,
+                progress_callback=on_progress
+            )
+            progress.update(task_id, completed=len(following), total=len(following), detail="Selesai")
+
+        if following:
+            export_data(following, prefix=f"following_{clean_target}", export_format=args.format)
 
 # ==============================================================================
 # MAIN ENTRYPOINT
@@ -289,16 +507,18 @@ async def run_cli_arguments(args, client):
 
 async def async_main():
     parser = argparse.ArgumentParser(
-        description="WIG-Scraper: Tool Scraping Data Instagram Modern (Profile, Comments, Hashtags)"
+        description="WIG-Scraper: Tool Scraping Data Instagram Modern (Profile, Comments, Hashtags, Followers)"
     )
     parser.add_argument("--profile", type=str, help="Username Instagram yang ingin di-scrape postingannya")
     parser.add_argument("--comments", type=str, help="URL atau shortcode postingan untuk di-scrape seluruh komentarnya")
     parser.add_argument("--batch-urls", type=str, help="Daftar URL postingan (file .txt atau dipisah koma) untuk batch komentar")
     parser.add_argument("--hashtag", type=str, help="Hashtag Instagram yang ingin dicari postingannya")
+    parser.add_argument("--followers", type=str, help="Username atau URL profil untuk di-scrape daftar pengikutnya (followers)")
+    parser.add_argument("--following", type=str, help="Username atau URL profil untuk di-scrape daftar following-nya")
     parser.add_argument("--drill-down", action="store_true", help="Gali komentar otomatis pada setiap postingan profil (fitur 2-in-1)")
     parser.add_argument("--limit", type=int, default=30, help="Jumlah maksimal data yang diambil (default: 30)")
     parser.add_argument("--max-comments", type=int, default=20, help="Batas maksimal komentar per post saat mode drill-down (default: 20)")
-    parser.add_argument("--format", type=str, choices=["csv", "json", "both"], default="both", help="Format ekspor file (default: both)")
+    parser.add_argument("--format", type=str, choices=["csv", "json", "both"], default="csv", help="Format ekspor file (default: csv)")
     parser.add_argument("--force-login", action="store_true", help="Paksa input ulang cookies sesi Instagram")
 
     args = parser.parse_args()
@@ -313,16 +533,19 @@ async def async_main():
         return
 
     # Jika pengguna menggunakan argumen baris perintah
-    has_cli_mode = any([args.profile, args.comments, args.batch_urls, args.hashtag])
+    has_cli_mode = any([args.profile, args.comments, args.batch_urls, args.hashtag, args.followers, args.following])
     if has_cli_mode:
         await run_cli_arguments(args, client)
         await client.close()
         return
 
     # Mode Interaktif Terminal Menu
+    first_time = True
     while True:
-        console.clear()
-        display_banner()
+        if not first_time:
+            console.clear()
+            display_banner()
+        first_time = False
 
         menu_table = Table(title="Pilihan Menu Utama", show_header=False, border_style="cyan")
         menu_table.add_column("No", style="bold yellow", width=4)
@@ -333,11 +556,13 @@ async def async_main():
         menu_table.add_row("3", "Scrape Seluruh Komentar dari Link / URL Postingan")
         menu_table.add_row("4", "Scrape Komentar dari Beberapa URL Sekaligus (Batch)")
         menu_table.add_row("5", "Scrape Postingan Berdasarkan Hashtag (#hashtag)")
-        menu_table.add_row("6", "Uji / Perbarui Cookies Sesi Instagram")
+        menu_table.add_row("6", "Scrape Daftar Pengikut Akun Publik (Followers) [BARU]")
+        menu_table.add_row("7", "Scrape Daftar Akun yang Diikuti (Following) [BARU]")
+        menu_table.add_row("8", "Uji / Perbarui Cookies Sesi Instagram")
         menu_table.add_row("0", "Keluar dari Aplikasi")
 
         console.print(menu_table)
-        pilihan = Prompt.ask("\nPilih nomor menu", choices=["1", "2", "3", "4", "5", "6", "0"], default="1")
+        pilihan = Prompt.ask("\nPilih nomor menu", choices=["1", "2", "3", "4", "5", "6", "7", "8", "0"], default="1")
 
         if pilihan == "1":
             await handle_menu_profile_posts(client, drill_down=False)
@@ -350,6 +575,10 @@ async def async_main():
         elif pilihan == "5":
             await handle_menu_hashtag_posts(client)
         elif pilihan == "6":
+            await handle_menu_followers(client)
+        elif pilihan == "7":
+            await handle_menu_following(client)
+        elif pilihan == "8":
             await client.close()
             client = await prompt_and_save_cookies()
             pause_prompt()
