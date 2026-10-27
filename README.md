@@ -168,8 +168,8 @@ WIG-Scraper (Instagram Data Extraction Suite)
 3. Scrape Seluruh Komentar dari Link / URL Postingan
 4. Scrape Komentar dari Beberapa URL Sekaligus (Batch)
 5. Scrape Postingan Berdasarkan Hashtag (#hashtag)
-6. Scrape Daftar Pengikut Akun Publik (Followers) [BARU]
-7. Scrape Daftar Akun yang Diikuti (Following) [BARU]
+6. Scrape Daftar Pengikut Akun Publik (Followers)
+7. Scrape Daftar Akun yang Diikuti (Following)
 8. Uji / Perbarui Cookies Sesi Instagram
 0. Keluar dari Aplikasi
 ```
@@ -276,9 +276,7 @@ Dataset yang dihasilkan mencakup lebih dari 20 atribut lengkap untuk kebutuhan a
 | `is_verified` | Boolean | Status lencana centang biru resmi (*verified badge*). |
 | `has_anonymous_profile_picture` | Boolean | Menandakan apakah pengguna memakai foto default/kosong (*indikator bot*). |
 | `has_active_story` | Boolean | Menandakan apakah pengguna sedang memiliki Instagram Story aktif (24 jam terakhir). |
-| `latest_reel_media` | Integer | Unix timestamp media Story terbaru. |
 | `profile_pic_url` | String | Tautan gambar foto profil pengikut. |
-| `fbid_v2` | String | ID akun Facebook yang terhubung (*jika ada*). |
 
 ---
 

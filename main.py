@@ -556,8 +556,8 @@ async def async_main():
         menu_table.add_row("3", "Scrape Seluruh Komentar dari Link / URL Postingan")
         menu_table.add_row("4", "Scrape Komentar dari Beberapa URL Sekaligus (Batch)")
         menu_table.add_row("5", "Scrape Postingan Berdasarkan Hashtag (#hashtag)")
-        menu_table.add_row("6", "Scrape Daftar Pengikut Akun Publik (Followers) [BARU]")
-        menu_table.add_row("7", "Scrape Daftar Akun yang Diikuti (Following) [BARU]")
+        menu_table.add_row("6", "Scrape Daftar Pengikut Akun Publik (Followers)")
+        menu_table.add_row("7", "Scrape Daftar Akun yang Diikuti (Following)")
         menu_table.add_row("8", "Uji / Perbarui Cookies Sesi Instagram")
         menu_table.add_row("0", "Keluar dari Aplikasi")
 

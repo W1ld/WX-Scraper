@@ -284,13 +284,6 @@ def parse_follower_item(
         "is_verified": is_verified,
         "has_anonymous_profile_picture": has_anonymous_pic,
         "has_active_story": has_active_story,
-        "latest_reel_media": latest_reel,
-        "profile_pic_url": profile_pic,
-        "fbid_v2": fbid,
-        # Kolom opsional penunjang konsistensi tabular jika digabung
-        "caption": "",
-        "created_at": "",
-        "likes_count": 0,
-        "comments_count": 0
+        "profile_pic_url": profile_pic
     }
 
