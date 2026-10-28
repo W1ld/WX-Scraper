@@ -388,7 +388,7 @@ async def scrape_multiple_posts_comments(
             show_log=True
         )
         all_comments.extend(comments)
-        print(f"[✓] Didapat {len(comments)} komentar dari post ini (Total: {len(all_comments)})")
+        print(f"[âœ“] Didapat {len(comments)} komentar dari post ini (Total: {len(all_comments)})")
 
         if i < len(post_inputs):
             await human_delay()
@@ -634,6 +634,11 @@ async def scrape_profile_followers(
     if duplicate_count > 0:
         print(f"[i] Info: Instagram mengembalikan total {raw_count} entri data ({duplicate_count} di antaranya merupakan duplikasi cursor pagination Instagram yang disaring). Total follower unik tersimpan: {len(collected_followers)}.")
 
+    if len(collected_followers) < limit:
+        print(f"\n[!] Info Pembatasan Instagram: Hanya berhasil mengambil {len(collected_followers)} follower dari target {limit}.")
+        print("    Instagram secara otomatis membatasi daftar followers untuk akun publik/besar ('should_limit_list_of_followers: True')")
+        print("    dan tidak menyediakan token halaman berikutnya (next_max_id) demi alasan privasi & anti-scraping.")
+
     return collected_followers
 
 async def scrape_profile_following(
@@ -724,6 +729,10 @@ async def scrape_profile_following(
 
     if duplicate_count > 0:
         print(f"[i] Info: Instagram mengembalikan total {raw_count} entri data ({duplicate_count} di antaranya merupakan duplikasi cursor pagination Instagram yang disaring). Total following unik tersimpan: {len(collected_following)}.")
+
+    if len(collected_following) < limit:
+        print(f"\n[!] Info Pembatasan Instagram: Hanya berhasil mengambil {len(collected_following)} following dari target {limit}.")
+        print("    Instagram membatasi daftar following dan tidak menyediakan token halaman berikutnya (next_max_id).")
 
     return collected_following
 

@@ -89,8 +89,8 @@ def show_preview_table(data: List[dict], max_rows: int = 6):
             uname = item.get("username", "")
             fname = item.get("full_name", "") or "-"
             is_priv = "[red]Private[/red]" if item.get("is_private") else "[green]Public[/green]"
-            is_ver = "[cyan]✓ Ya[/cyan]" if item.get("is_verified") else "[dim]Tidak[/dim]"
-            has_story = "[green]🟢 Ada[/green]" if item.get("has_active_story") else "[dim]-[/dim]"
+            is_ver = "[cyan]âœ“ Ya[/cyan]" if item.get("is_verified") else "[dim]Tidak[/dim]"
+            has_story = "[green]ðŸŸ¢ Ada[/green]" if item.get("has_active_story") else "[dim]-[/dim]"
 
             table.add_row(
                 str(i),
@@ -337,7 +337,8 @@ async def handle_menu_followers(client):
             limit=limit,
             progress_callback=on_progress
         )
-        progress.update(task_id, completed=len(followers), total=len(followers), detail="Selesai")
+        detail_msg = f"Selesai ({len(followers)}/{limit} - dibatasi server)" if len(followers) < limit else "Selesai"
+        progress.update(task_id, completed=len(followers), total=limit, detail=detail_msg)
 
     if followers:
         show_preview_table(followers)
@@ -370,7 +371,8 @@ async def handle_menu_following(client):
             limit=limit,
             progress_callback=on_progress
         )
-        progress.update(task_id, completed=len(following), total=len(following), detail="Selesai")
+        detail_msg = f"Selesai ({len(following)}/{limit} - dibatasi server)" if len(following) < limit else "Selesai"
+        progress.update(task_id, completed=len(following), total=limit, detail=detail_msg)
 
     if following:
         show_preview_table(following)
@@ -477,7 +479,8 @@ async def run_cli_arguments(args, client):
                 limit=args.limit,
                 progress_callback=on_progress
             )
-            progress.update(task_id, completed=len(followers), total=len(followers), detail="Selesai")
+            detail_msg = f"Selesai ({len(followers)}/{limit} - dibatasi server)" if len(followers) < limit else "Selesai"
+        progress.update(task_id, completed=len(followers), total=limit, detail=detail_msg)
 
         if followers:
             export_data(followers, prefix=f"followers_{clean_target}", export_format=args.format)
@@ -496,7 +499,8 @@ async def run_cli_arguments(args, client):
                 limit=args.limit,
                 progress_callback=on_progress
             )
-            progress.update(task_id, completed=len(following), total=len(following), detail="Selesai")
+            detail_msg = f"Selesai ({len(following)}/{limit} - dibatasi server)" if len(following) < limit else "Selesai"
+        progress.update(task_id, completed=len(following), total=limit, detail=detail_msg)
 
         if following:
             export_data(following, prefix=f"following_{clean_target}", export_format=args.format)
